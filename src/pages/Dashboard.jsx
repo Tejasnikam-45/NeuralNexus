@@ -31,7 +31,16 @@ export default function Dashboard() {
   // Initial load
   useEffect(() => {
     fetchStats().then(setStats).catch(console.error);
-    fetchModelPerformance().then(setPerformance).catch(console.error);
+    fetchModelPerformance().then(data => {
+      // Backend shape: { eval_metrics: { aucpr, roc_auc, best_f1, best_threshold }, model_version }
+      // Note: precision/recall are NOT saved in eval_metrics.json — use aucpr and roc_auc instead
+      setPerformance({
+        aucpr:           data.eval_metrics?.aucpr,
+        roc_auc:         data.eval_metrics?.roc_auc,
+        f1_score:        data.eval_metrics?.best_f1,
+        current_version: data.model_version,
+      });
+    }).catch(console.error);
   }, []);
 
   // For charts and fallback table we keep mockData as placeholders
@@ -55,7 +64,21 @@ export default function Dashboard() {
           <StatCard label="Transactions Today"  value={stats?.total_scored?.toLocaleString() || "..."}  delta="Live Engine" deltaUp={true}  icon="💳" color="#6366f1" />
           <StatCard label="Blocked (Fraud)"     value={stats?.blocked?.toLocaleString() || "..."}     delta={stats?.block_rate_pct != null ? `${stats.block_rate_pct.toFixed(2)}% rate` : ""}   deltaUp={false} icon="🛡️" color="#f43f5e" />
           <StatCard label="MFA Challenged"      value={stats?.mfa?.toLocaleString() || "..."}     delta={stats?.active_ato_chains + " active ATOs"}     deltaUp={null}  icon="🔐" color="#f59e0b" />
-          <StatCard label="Avg Decision Time"   value={(stats?.avg_latency_ms || "43") + "ms"}    delta="SLA: <100ms ✓"      deltaUp={true}  icon="⚡" color="#10b981" />
+          {(() => {
+            const lat = stats?.avg_latency_ms;
+            const underSLA = lat != null && lat < 100;
+            const overSLA  = lat != null && lat >= 100;
+            return (
+              <StatCard
+                label="Avg Decision Time"
+                value={lat != null ? `${lat}ms` : '...'}
+                delta={lat == null ? 'Awaiting data' : overSLA ? `⚠️ Over SLA (>${lat}ms)` : 'SLA: <100ms ✓'}
+                deltaUp={lat == null ? null : underSLA}
+                icon="⚡"
+                color={overSLA ? '#f43f5e' : '#10b981'}
+              />
+            );
+          })()}
         </div>
 
         {/* CHARTS ROW */}
@@ -178,9 +201,9 @@ export default function Dashboard() {
             <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
               <span className="section-title" style={{ marginBottom: 12, display: 'block' }}>Model Health</span>
               {[
-                { label: 'Precision', val: performance ? `${(performance.precision * 100).toFixed(1)}%` : '...', color: '#10b981' },
-                { label: 'Recall', val: performance ? `${(performance.recall * 100).toFixed(1)}%` : '...', color: '#6366f1' },
-                { label: 'F1 Score', val: performance ? `${(performance.f1_score * 100).toFixed(1)}%` : '...', color: '#8b5cf6' },
+                { label: 'AUC-PR',   val: performance?.aucpr   != null ? performance.aucpr.toFixed(4)   : '...', color: '#10b981' },
+                { label: 'ROC-AUC', val: performance?.roc_auc != null ? performance.roc_auc.toFixed(4) : '...', color: '#6366f1' },
+                { label: 'F1 Score', val: performance?.f1_score != null ? `${(performance.f1_score * 100).toFixed(1)}%` : '...', color: '#8b5cf6' },
                 { label: 'Model Ver', val: performance?.current_version || '...', color: '#06b6d4' },
               ].map(kpi => (
                 <div key={kpi.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0' }}>

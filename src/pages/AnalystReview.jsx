@@ -53,17 +53,18 @@ export default function AnalystReview() {
 
   const handleAction = async (action) => {
     if (!current) return;
-    const label = action === 'safe' ? 'false_positive' : action === 'fraud' ? 'true_fraud' : 'needs_review';
+    // Backend only accepts 'fraud' or 'legit' — map all three actions
+    const label = action === 'fraud' ? 'fraud' : 'legit';
     const logLabel = action === 'safe' ? '✅ Marked Safe' : action === 'fraud' ? '❌ Confirmed Fraud' : '🔄 Queued for Retraining';
     
     try {
       await submitFeedback({
         transaction_id: current.id,
+        user_id: current.user,        // required by backend FeedbackRequest
         analyst_id: 'analyst_demo',
-        label,
-        analyst_note: note,
-        override_decision: action === 'safe' ? 'approve' : 'block',
-        timestamp_utc: new Date().toISOString()
+        label,                        // 'fraud' | 'legit'
+        notes: note,                  // backend field is 'notes', not 'analyst_note'
+        chain_id: current.raw?.ato_chain_id || null,
       });
       
       setActionLog(prev => [{
@@ -76,7 +77,8 @@ export default function AnalystReview() {
       setCurrent(remaining[0] || null);
       setNote('');
     } catch (err) {
-      console.error(err);
+      console.error('Feedback submission failed:', err);
+      alert(`Error: ${err.message}`);
     }
   };
 
@@ -171,7 +173,21 @@ export default function AnalystReview() {
               {/* SHAP */}
               <div style={{ marginBottom: 20 }}>
                 <div className="section-title" style={{ marginBottom: 10 }}>SHAP Feature Importance</div>
-                {SHAP_FEATURES.map(f => <ShapBar key={f.name} feature={f} />)}
+                {(() => {
+                  const realReasons = current.raw?.shap_reasons;
+                  if (realReasons && realReasons.length > 0) {
+                    // Render real SHAP reasons from backend
+                    return realReasons.map((f, i) => (
+                      <ShapBar key={i} feature={{
+                        name: f.display || f.feature || `Feature ${i}`,
+                        value: Math.abs(f.shap ?? f.value ?? 0),
+                        positive: f.direction ? f.direction.includes('↑') : (f.shap ?? 0) > 0,
+                      }} />
+                    ));
+                  }
+                  // Fallback to static mock if no real data yet
+                  return SHAP_FEATURES.map(f => <ShapBar key={f.name} feature={f} />);
+                })()}
               </div>
 
               {/* Score bar */}

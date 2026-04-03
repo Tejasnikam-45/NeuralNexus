@@ -145,19 +145,26 @@ export default function ATOChains() {
   const [chains, setChains] = useState([]);
   const [stats, setStats] = useState({ active:0, resolved:0 });
 
+  const [lockSuccess, setLockSuccess] = useState(null);
+
   const handleResolve = async (chain) => {
     try {
+      // Generate a real-looking transaction ID based on chain ID
+      const txnId = `ato_lock_${chain.id.toLowerCase().replace('-', '_')}_${Date.now()}`;
       await submitFeedback({
-        transaction_id: 'ATO_MANUAL_LOCK',
+        transaction_id: txnId,
         user_id: chain.user,
         label: 'fraud',
         chain_id: chain.id,
-        notes: 'Account manually locked by analyst'
+        notes: `Account manually locked by analyst. Chain: ${chain.id} | User: ${chain.user}`
       });
       setChains(prev => prev.filter(c => c.id !== chain.id));
       setStats(prev => ({ ...prev, active: Math.max(0, prev.active - 1), resolved: prev.resolved + 1 }));
+      setLockSuccess(chain.id);
+      setTimeout(() => setLockSuccess(null), 3000);
     } catch (err) {
       console.error('Failed to lock account', err);
+      alert(`Lock failed: ${err.message}`);
     }
   };
 
@@ -191,6 +198,18 @@ export default function ATOChains() {
     <div>
       <Topbar title="ATO Chain Detector" subtitle="Account Takeover → Transaction abuse linkage" />
       <div className="page">
+
+        {/* Success toast */}
+        {lockSuccess && (
+          <div style={{
+            padding: '12px 18px', background: 'rgba(16,185,129,0.15)',
+            border: '1px solid rgba(16,185,129,0.4)', borderRadius: 10,
+            color: '#34d399', fontSize: 13, fontWeight: 600,
+            display: 'flex', alignItems: 'center', gap: 8, animation: 'fadeInUp 0.3s ease'
+          }}>
+            🔒 Chain {lockSuccess} resolved — Account locked and flagged for retraining.
+          </div>
+        )}
 
         {/* Stats */}
         <div className="grid-4">

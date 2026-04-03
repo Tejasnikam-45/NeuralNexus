@@ -789,6 +789,7 @@ def _post_score_tasks(req: ScoreRequest, decision: str, score: float,
         "timestamp_utc":  now_ts,
         "shap_reasons":   response["shap_reasons"][:2],
         "rule_triggers":  [r["rule_id"] for r in response["rule_engine"]["triggered_rules"]],
+        "latency_ms":     response["latency_ms"]["total"],
     })
 
     # WebSocket broadcast — schedule on the running event loop
@@ -985,6 +986,7 @@ def get_stats():
 
     decisions = [t["decision"] for t in txns]
     scores    = [t["score"]    for t in txns]
+    latencies = [t["latency_ms"] for t in txns if "latency_ms" in t]
 
     return {
         "total_scored":  len(txns),
@@ -993,6 +995,11 @@ def get_stats():
         "blocked":       decisions.count("block"),
         "block_rate_pct": round(decisions.count("block") / len(txns) * 100, 2),
         "avg_score":     round(sum(scores) / len(scores), 2),
+        # Exclude cold-start outliers (>500ms) — first request after restart
+        # triggers PyTorch/XGB JIT compilation which skews the SLA metric
+        "avg_latency_ms": round(
+            sum(l for l in latencies if l < 500) / max(sum(1 for l in latencies if l < 500), 1), 1
+        ) if latencies else None,
         "active_ato_chains": len(ato_detector.get_active_chains()),
         "pending_analyst_labels": len(_feedback_store),
     }
