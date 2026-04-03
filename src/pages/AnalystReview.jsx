@@ -3,8 +3,7 @@ import Topbar from '../components/Topbar';
 import { TRANSACTIONS, SHAP_FEATURES } from '../data/mockData';
 import { RiskScoreBadge, ScoreBar } from '../components/UIKit';
 import { CheckCircle, XCircle, RotateCcw, MessageSquare } from 'lucide-react';
-
-const REVIEW_QUEUE = TRANSACTIONS.filter(t => t.score >= 55 || t.ato);
+import { fetchFeedbackQueue, submitFeedback } from '../api';
 
 function ShapBar({ feature }) {
   const max = 0.45;
@@ -28,21 +27,57 @@ function ShapBar({ feature }) {
 }
 
 export default function AnalystReview() {
-  const [queue, setQueue] = useState(REVIEW_QUEUE);
-  const [current, setCurrent] = useState(queue[0]);
+  const [queue, setQueue] = useState([]);
+  const [current, setCurrent] = useState(null);
   const [note, setNote] = useState('');
   const [actionLog, setActionLog] = useState([]);
+  
+  React.useEffect(() => {
+    fetchFeedbackQueue().then(resp => {
+      const qs = resp.queue.map(q => ({
+        id: q.transaction_id,
+        user: q.user_id,
+        score: Math.round(q.score),
+        amount: q.amount_usd,
+        merchant: "Reason: " + q.shap_reasons?.[0]?.text?.substring(0,25) || "Unspecified",
+        type: q.decision,
+        flags: q.rule_triggers || [],
+        device: "Unknown", location: "Unknown",
+        time: new Date(q.timestamp_utc * 1000).toLocaleTimeString('en-US', { hour12: false }),
+        raw: q
+      }));
+      setQueue(qs);
+      setCurrent(qs[0] || null);
+    }).catch(console.error);
+  }, []);
 
-  const handleAction = (action) => {
-    const label = action === 'safe' ? '✅ Marked Safe' : action === 'fraud' ? '❌ Confirmed Fraud' : '🔄 Queued for Retraining';
-    setActionLog(prev => [{
-      id: current.id, user: current.user, score: current.score,
-      action: label, time: new Date().toLocaleTimeString('en-US', { hour12: false }), note
-    }, ...prev.slice(0, 9)]);
-    const remaining = queue.filter(t => t.id !== current.id);
-    setQueue(remaining);
-    setCurrent(remaining[0]);
-    setNote('');
+  const handleAction = async (action) => {
+    if (!current) return;
+    const label = action === 'safe' ? 'false_positive' : action === 'fraud' ? 'true_fraud' : 'needs_review';
+    const logLabel = action === 'safe' ? '✅ Marked Safe' : action === 'fraud' ? '❌ Confirmed Fraud' : '🔄 Queued for Retraining';
+    
+    try {
+      await submitFeedback({
+        transaction_id: current.id,
+        analyst_id: 'analyst_demo',
+        label,
+        analyst_note: note,
+        override_decision: action === 'safe' ? 'approve' : 'block',
+        timestamp_utc: new Date().toISOString()
+      });
+      
+      setActionLog(prev => [{
+        id: current.id, user: current.user, score: current.score,
+        action: logLabel, time: new Date().toLocaleTimeString('en-US', { hour12: false }), note
+      }, ...prev.slice(0, 9)]);
+      
+      const remaining = queue.filter(t => t.id !== current.id);
+      setQueue(remaining);
+      setCurrent(remaining[0] || null);
+      setNote('');
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   return (

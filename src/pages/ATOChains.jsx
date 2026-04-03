@@ -1,28 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Topbar from '../components/Topbar';
 import { ATO_CHAIN_EVENTS } from '../data/mockData';
 import { ShieldAlert, Link, UserX, CreditCard, ChevronDown, ChevronUp } from 'lucide-react';
+import { fetchATOChains } from '../api';
 
-const MOCK_CHAINS = [
-  {
-    id: 'ATO-001', user: 'usr_tom_b', risk: 95, status: 'active',
-    summary: 'SIM swap → Profile hijack → $5,600 NFT transaction',
-    events: ATO_CHAIN_EVENTS,
-    linkedAccounts: ['usr_tom_b', 'usr_alex92'],
-    device: 'device_A7F',
-    ip: '185.220.x.x (TOR)',
-    startTime: '13:58:02', endTime: '14:01:38', duration: '3m 36s',
-  },
-  {
-    id: 'ATO-002', user: 'usr_james_w', risk: 82, status: 'active',
-    summary: 'Credential stuffing → New device login → $3,100 FX trade',
-    events: ATO_CHAIN_EVENTS.slice(0, 3),
-    linkedAccounts: ['usr_james_w'],
-    device: 'device_B9K',
-    ip: '194.33.x.x (VPN)',
-    startTime: '14:02:10', endTime: '14:02:19', duration: '9s',
-  },
-];
+const MOCK_CHAINS = []; // Real ones hit below
 
 const severityColor = {
   critical: '#f43f5e',
@@ -156,6 +138,35 @@ function ChainCard({ chain }) {
 }
 
 export default function ATOChains() {
+  const [chains, setChains] = useState([]);
+  const [stats, setStats] = useState({ active:0, resolved:0 });
+
+  useEffect(() => {
+    fetchATOChains().then(resp => {
+      setStats({ active: resp.active_count, resolved: resp.resolved_today });
+      setChains(resp.chains.map(c => ({
+        id: c.chain_id,
+        user: c.user_id,
+        risk: Math.round(c.risk_score),
+        status: c.status,
+        summary: c.summary,
+        events: c.events.map(e => ({
+            time: new Date(e.timestamp_utc * 1000).toLocaleTimeString('en-US', { hour12: false }),
+            label: e.detail,
+            detail: e.detail,
+            severity: e.severity,
+            icon: '⚠'
+        })),
+        linkedAccounts: c.linked_account_ids || [c.user_id],
+        device: c.linked_device_id,
+        ip: c.attacker_ip,
+        startTime: new Date(c.start_time_utc * 1000).toLocaleTimeString('en-US'),
+        endTime: c.end_time_utc ? new Date(c.end_time_utc * 1000).toLocaleTimeString('en-US') : 'Ongoing',
+        duration: c.duration_seconds ? `${c.duration_seconds}s` : '...',
+      })));
+    }).catch(console.error);
+  }, []);
+
   return (
     <div>
       <Topbar title="ATO Chain Detector" subtitle="Account Takeover → Transaction abuse linkage" />
@@ -164,10 +175,10 @@ export default function ATOChains() {
         {/* Stats */}
         <div className="grid-4">
           {[
-            { label: 'Active Chains', val: '2', color: '#f43f5e', icon: '🔗' },
-            { label: 'Accounts at Risk', val: '3', color: '#fb923c', icon: '👤' },
-            { label: 'Avg Chain Duration', val: '1m 58s', color: '#f59e0b', icon: '⏱️' },
-            { label: 'Auto-Blocked Today', val: '7', color: '#10b981', icon: '🛡️' },
+            { label: 'Active Chains', val: stats.active, color: '#f43f5e', icon: '🔗' },
+            { label: 'Accounts at Risk', val: chains.length, color: '#fb923c', icon: '👤' },
+            { label: 'Avg Chain Duration', val: 'Ongoing', color: '#f59e0b', icon: '⏱️' },
+            { label: 'Auto-Blocked Today', val: stats.resolved, color: '#10b981', icon: '🛡️' },
           ].map(s => (
             <div key={s.label} className="glass" style={{ padding: '16px 20px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -196,7 +207,10 @@ export default function ATOChains() {
         </div>
 
         {/* Chain Cards */}
-        {MOCK_CHAINS.map(chain => <ChainCard key={chain.id} chain={chain} />)}
+        {chains.map(chain => <ChainCard key={chain.id} chain={chain} />)}
+        {chains.length === 0 && (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>No ATO chains detected currently.</div>
+        )}
 
       </div>
     </div>

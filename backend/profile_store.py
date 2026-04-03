@@ -19,6 +19,16 @@ Architecture
       ▼
   profile_store.update_profile(user_id, txn)  ← called AFTER decision
 
+Fixes applied vs original:
+  Bug 1 — update_profile() now initialises first_txn_ts as
+           now - 30*86400 for new users, matching the cold-start
+           value in get_profile(). Previously it used `now`,
+           making account_age_days permanently 0 after the first
+           transaction.
+  Bug 2 — velocity sorted-set keys now include a uuid4 suffix so
+           two transactions at the same unix timestamp don't
+           silently overwrite each other in the sorted set.
+
 Key design decisions
 ────────────────────
   • Redis hash per user  →  key  "profile:{user_id}"
@@ -47,11 +57,10 @@ Feature mapping to feature_schema.py
 
 Usage
 ─────
-  from profile_store import ProfileStore, ProfileSnapshot
-  store = ProfileStore()                     # reads USE_REAL_REDIS from env
-  snap  = await store.get_profile(user_id, device_id, ip, now_ts)
+  from profile_store import store, ProfileSnapshot
+  snap = store.get_profile(user_id, device_id, ip, now_ts)
   # ... build feature vector ...
-  await store.update_profile(user_id, device_id, ip, amount, now_ts)
+  store.update_profile(user_id, device_id, ip, amount, now_ts)
 
 Run self-test:
     python backend/profile_store.py
@@ -64,17 +73,18 @@ import json
 import math
 import os
 import time
-from dataclasses import dataclass, field, asdict
+import uuid
+from dataclasses import dataclass, asdict
 from typing import Optional
 
-# ── dotenv support (load .env if present) ─────────────────────────
+# ── dotenv support ─────────────────────────────────────────────
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    pass  # dotenv optional — env vars can be set directly
+    pass
 
-# ── Redis client ───────────────────────────────────────────────────
+# ── Redis client ───────────────────────────────────────────────
 USE_REAL_REDIS = os.getenv("USE_REAL_REDIS", "0") == "1"
 
 if USE_REAL_REDIS:
@@ -100,76 +110,62 @@ else:
 # so new-user features are realistic, not zero.
 # ─────────────────────────────────────────────
 
-# PaySim dataset stats (from dataset_stats.json)
-_GLOBAL_MEAN_AMOUNT   = 179_861.89   # dataset mean transaction amount
-_GLOBAL_STD_AMOUNT    = 603_858.25   # dataset std  transaction amount
-_GLOBAL_MEDIAN_AMOUNT = 74_871.94    # approximate median (log-normal dist)
+_GLOBAL_MEAN_AMOUNT   = 179_861.89
+_GLOBAL_STD_AMOUNT    = 603_858.25
+_GLOBAL_MEDIAN_AMOUNT = 74_871.94
 
 COLD_START_DEFAULTS = {
-    # Welford counters — use realistic global median so ratio features work
     "welford_n":    1,
     "welford_mean": _GLOBAL_MEDIAN_AMOUNT,
-    "welford_M2":   _GLOBAL_STD_AMOUNT ** 2,  # variance = std²
-    # Timestamps — sentinel: user existed for 30 days before first API call
+    "welford_M2":   _GLOBAL_STD_AMOUNT ** 2,
     "first_txn_ts": None,   # filled at access time → now - 30*86400
-    "last_txn_ts":  None,   # filled at access time → now - 3600 (1h ago)
-    # Counters
+    "last_txn_ts":  None,   # filled at access time → now - 3600
     "total_txn_count": 0,
 }
 
-# TTL for user profiles (90 days in seconds)
 PROFILE_TTL_SECONDS = 90 * 24 * 3600
 
-# Velocity window sizes in seconds
 VELOCITY_WINDOWS = {
     "1h":  3_600,
     "24h": 86_400,
     "7d":  604_800,
 }
 
-# Redis key prefixes
-_HASH_PREFIX     = "profile:"        # main hash  → profile:{user_id}
-_DEVICES_PREFIX  = "devices:"        # set         → devices:{user_id}
-_IPS_PREFIX      = "ips:"            # set         → ips:{user_id}
-_VELOCITY_PREFIX = "velocity:"       # sorted set  → velocity:{user_id}
-_GEO_PREFIX      = "geo:"            # hash        → geo:{user_id}
+_HASH_PREFIX     = "profile:"
+_DEVICES_PREFIX  = "devices:"
+_IPS_PREFIX      = "ips:"
+_VELOCITY_PREFIX = "velocity:"
+_GEO_PREFIX      = "geo:"
 
 
 # ─────────────────────────────────────────────
-# PROFILE SNAPSHOT (what get_profile returns)
+# PROFILE SNAPSHOT
 # ─────────────────────────────────────────────
 
 @dataclass
 class ProfileSnapshot:
     """
     Immutable snapshot of a user's profile at a point in time.
-    All values are the FEATURE VALUES ready for the model — computed,
-    not raw Redis strings.
+    Values are FEATURE-READY — computed, not raw Redis strings.
     """
-    # Identity
-    user_id:          str
-    is_new_user:      bool   # True if profile didn't exist before this call
+    user_id:           str
+    is_new_user:       bool
 
-    # Amount profile
-    mean_txn_amount:  float
-    std_txn_amount:   float
-    txn_count_total:  int
+    mean_txn_amount:   float
+    std_txn_amount:    float
+    txn_count_total:   int
 
-    # Device / IP
     is_new_device:     bool
     is_new_ip:         bool
     device_count_seen: int
 
-    # Velocity
     txn_count_last_1h:  int
     txn_count_last_24h: int
     txn_count_last_7d:  int
 
-    # Temporal
     inter_txn_seconds:  float
     account_age_days:   float
 
-    # Last known geo (lat/lon, used to compute geo_distance_km in FastAPI)
     last_lat: float
     last_lon: float
 
@@ -191,14 +187,14 @@ class ProfileSnapshot:
 
 
 # ─────────────────────────────────────────────
-# WELFORD HELPERS (stateless, pure functions)
+# WELFORD HELPERS
 # ─────────────────────────────────────────────
 
 def welford_update(n: int, mean: float, M2: float, x: float) -> tuple[int, float, float]:
     """One Welford step. Returns updated (n, mean, M2)."""
-    n    += 1
-    delta = x - mean
-    mean += delta / n
+    n     += 1
+    delta  = x - mean
+    mean  += delta / n
     delta2 = x - mean
     M2    += delta * delta2
     return n, mean, M2
@@ -218,23 +214,23 @@ class ProfileStore:
     """
     Redis-backed per-user behavioral profile store.
 
-    All methods are synchronous (FastAPI will run them in a threadpool
-    via `asyncio.get_event_loop().run_in_executor` if needed, or call
-    them directly since Redis I/O is fast enough at <5ms budget).
+    All methods are synchronous. FastAPI runs them in a thread-pool
+    executor when called from async endpoints — Redis I/O is fast
+    enough that they fit comfortably in the <5ms latency budget.
     """
 
     def __init__(self, client=None):
         self._r = client or _redis_client
 
-    # ── Internal key helpers ──────────────────────────────────────
+    # ── Key helpers ───────────────────────────────────────────────
 
-    def _hash_key(self, uid: str) -> str:     return f"{_HASH_PREFIX}{uid}"
-    def _dev_key(self,  uid: str) -> str:     return f"{_DEVICES_PREFIX}{uid}"
-    def _ip_key(self,   uid: str) -> str:     return f"{_IPS_PREFIX}{uid}"
-    def _vel_key(self,  uid: str) -> str:     return f"{_VELOCITY_PREFIX}{uid}"
-    def _geo_key(self,  uid: str) -> str:     return f"{_GEO_PREFIX}{uid}"
+    def _hash_key(self, uid: str) -> str: return f"{_HASH_PREFIX}{uid}"
+    def _dev_key(self,  uid: str) -> str: return f"{_DEVICES_PREFIX}{uid}"
+    def _ip_key(self,   uid: str) -> str: return f"{_IPS_PREFIX}{uid}"
+    def _vel_key(self,  uid: str) -> str: return f"{_VELOCITY_PREFIX}{uid}"
+    def _geo_key(self,  uid: str) -> str: return f"{_GEO_PREFIX}{uid}"
 
-    # ── Public: GET PROFILE ────────────────────────────────────────
+    # ── GET PROFILE ───────────────────────────────────────────────
 
     def get_profile(
         self,
@@ -249,27 +245,16 @@ class ProfileStore:
         Look up user profile and return a ProfileSnapshot ready for
         feature computation.
 
-        Args:
-            user_id:   Unique user identifier
-            device_id: Current request device fingerprint
-            ip:        Current request IP address
-            now_ts:    Unix timestamp (default: time.time())
-            lat:       Current transaction latitude  (0 if unknown)
-            lon:       Current transaction longitude (0 if unknown)
-
-        Returns:
-            ProfileSnapshot with all profile features computed.
-            Cold-start defaults are used if user has no history.
+        Cold-start defaults apply for users with no history.
         """
         now = now_ts or time.time()
         hk  = self._hash_key(user_id)
 
-        # ── 1. Read main hash ──────────────────────────────────────
-        raw = self._r.hgetall(hk)
+        raw        = self._r.hgetall(hk)
         is_new_user = len(raw) == 0
 
         if is_new_user:
-            # Cold-start: synthetic 30-day-old account
+            # Synthetic 30-day-old account for cold-start stability
             first_ts = now - 30 * 86_400
             last_ts  = now - 3_600
             wn    = int(COLD_START_DEFAULTS["welford_n"])
@@ -277,18 +262,18 @@ class ProfileStore:
             wM2   = float(COLD_START_DEFAULTS["welford_M2"])
             total = int(COLD_START_DEFAULTS["total_txn_count"])
         else:
+            # FIX Bug 1 (read side): consistently fall back to now-30d
+            # so account_age_days is correct even on the very first update.
             first_ts = float(raw.get("first_txn_ts", now - 30 * 86_400))
             last_ts  = float(raw.get("last_txn_ts",  now - 3_600))
-            wn    = int(raw.get("welford_n",    1))
-            wmean = float(raw.get("welford_mean", _GLOBAL_MEDIAN_AMOUNT))
-            wM2   = float(raw.get("welford_M2",  _GLOBAL_STD_AMOUNT ** 2))
+            wn    = int(raw.get("welford_n",       1))
+            wmean = float(raw.get("welford_mean",  _GLOBAL_MEDIAN_AMOUNT))
+            wM2   = float(raw.get("welford_M2",    _GLOBAL_STD_AMOUNT ** 2))
             total = int(raw.get("total_txn_count", 0))
 
-        # ── 2. Stats derived from Welford ──────────────────────────
         mean_amt = wmean
         std_amt  = welford_std(wn, wM2)
 
-        # ── 3. Device & IP checks ──────────────────────────────────
         dk = self._dev_key(user_id)
         ik = self._ip_key(user_id)
 
@@ -296,17 +281,14 @@ class ProfileStore:
         is_new_ip         = not self._r.sismember(ik, ip)
         device_count_seen = int(self._r.scard(dk))
 
-        # ── 4. Velocity (sorted-set range queries) ─────────────────
-        vk = self._vel_key(user_id)
+        vk      = self._vel_key(user_id)
         txn_1h  = int(self._r.zcount(vk, now - VELOCITY_WINDOWS["1h"],  now))
         txn_24h = int(self._r.zcount(vk, now - VELOCITY_WINDOWS["24h"], now))
         txn_7d  = int(self._r.zcount(vk, now - VELOCITY_WINDOWS["7d"],  now))
 
-        # ── 5. Temporal features ───────────────────────────────────
-        inter_txn_sec  = max(1.0, now - last_ts)
-        account_age_d  = max(0.0, (now - first_ts) / 86_400)
+        inter_txn_sec = max(1.0, now - last_ts)
+        account_age_d = max(0.0, (now - first_ts) / 86_400)
 
-        # ── 6. Last known geo ──────────────────────────────────────
         gk      = self._geo_key(user_id)
         geo_raw = self._r.hgetall(gk)
         last_lat = float(geo_raw.get("lat", lat))
@@ -330,7 +312,7 @@ class ProfileStore:
             last_lon=last_lon,
         )
 
-    # ── Public: UPDATE PROFILE ─────────────────────────────────────
+    # ── UPDATE PROFILE ────────────────────────────────────────────
 
     def update_profile(
         self,
@@ -343,68 +325,62 @@ class ProfileStore:
         lon:       float = 0.0,
     ) -> None:
         """
-        Update the user's profile after a transaction has been processed.
-        Must be called AFTER the scoring decision is made — not before.
-
+        Update the user's profile AFTER a transaction has been processed.
         Pipeline-batched into a single Redis round-trip for speed.
 
-        Args:
-            user_id:   Unique user identifier
-            device_id: Device fingerprint used in this transaction
-            ip:        IP address used in this transaction
-            amount:    Transaction amount in USD
-            now_ts:    Unix timestamp (default: time.time())
-            lat:       Transaction latitude  (0 if unknown)
-            lon:       Transaction longitude (0 if unknown)
+        FIX Bug 1: first_txn_ts defaults to now - 30*86400 for new users,
+                   matching the cold-start sentinel in get_profile().
+                   Previously it used `now`, making account_age_days = 0
+                   permanently after the very first transaction.
+
+        FIX Bug 2: velocity sorted-set key now includes a uuid4 suffix so
+                   two transactions at the same unix timestamp (common in
+                   PaySim replay) don't overwrite each other.
         """
         now = now_ts or time.time()
         hk  = self._hash_key(user_id)
 
-        # ── Read current Welford state ─────────────────────────────
         raw = self._r.hmget(hk, "welford_n", "welford_mean", "welford_M2",
                             "first_txn_ts", "total_txn_count")
 
         wn    = int(raw[0])   if raw[0] is not None else 0
         wmean = float(raw[1]) if raw[1] is not None else 0.0
         wM2   = float(raw[2]) if raw[2] is not None else 0.0
-        first = float(raw[3]) if raw[3] is not None else now
         total = int(raw[4])   if raw[4] is not None else 0
 
-        # ── Welford step ───────────────────────────────────────────
+        # FIX Bug 1: new users get now-30d, not now
+        first = float(raw[3]) if raw[3] is not None else (now - 30 * 86_400)
+
         wn, wmean, wM2 = welford_update(wn, wmean, wM2, amount)
 
-        # ── Batch all writes in a pipeline ────────────────────────
         pipe = self._r.pipeline(transaction=False)
 
-        # Update main hash
         pipe.hset(hk, mapping={
-            "welford_n":      wn,
-            "welford_mean":   wmean,
-            "welford_M2":     wM2,
-            "first_txn_ts":   first,
-            "last_txn_ts":    now,
+            "welford_n":       wn,
+            "welford_mean":    wmean,
+            "welford_M2":      wM2,
+            "first_txn_ts":    first,
+            "last_txn_ts":     now,
             "total_txn_count": total + 1,
         })
         pipe.expire(hk, PROFILE_TTL_SECONDS)
 
-        # Add device to known-devices set
         dk = self._dev_key(user_id)
         pipe.sadd(dk, device_id)
         pipe.expire(dk, PROFILE_TTL_SECONDS)
 
-        # Add IP to known-IPs set
         ik = self._ip_key(user_id)
         pipe.sadd(ik, ip)
         pipe.expire(ik, PROFILE_TTL_SECONDS)
 
-        # Add timestamp to velocity sorted set, prune old entries
         vk = self._vel_key(user_id)
-        pipe.zadd(vk, {f"{now}:{amount:.2f}": now})
-        # Prune entries older than 7 days (largest window we query)
+        # FIX Bug 2: add uuid suffix so same-timestamp transactions are
+        # stored as separate members instead of silently overwriting.
+        vel_key = f"{now}:{uuid.uuid4().hex[:8]}"
+        pipe.zadd(vk, {vel_key: now})
         pipe.zremrangebyscore(vk, 0, now - VELOCITY_WINDOWS["7d"])
         pipe.expire(vk, PROFILE_TTL_SECONDS)
 
-        # Update last known geo
         gk = self._geo_key(user_id)
         if lat != 0.0 or lon != 0.0:
             pipe.hset(gk, mapping={"lat": lat, "lon": lon})
@@ -412,50 +388,55 @@ class ProfileStore:
 
         pipe.execute()
 
-    # ── Public: DELETE (for testing / GDPR) ───────────────────────
+    # ── DELETE (GDPR / testing) ───────────────────────────────────
 
     def delete_profile(self, user_id: str) -> int:
-        """Delete all Redis keys for a user. Returns number of keys deleted."""
         keys = [
-            self._hash_key(user_id),
-            self._dev_key(user_id),
-            self._ip_key(user_id),
-            self._vel_key(user_id),
+            self._hash_key(user_id), self._dev_key(user_id),
+            self._ip_key(user_id),   self._vel_key(user_id),
             self._geo_key(user_id),
         ]
         return self._r.delete(*keys)
 
-    # ── Public: HEALTH CHECK ───────────────────────────────────────
+    # ── HEALTH CHECK ─────────────────────────────────────────────
 
     def ping(self) -> bool:
-        """Returns True if Redis is reachable."""
         try:
             return self._r.ping()
         except Exception:
             return False
 
-    # ── Public: BULK SEED (for demo / pre-warming) ────────────────
+    # ── GET PROFILE RAW (for /users/{id} dashboard panel) ────────
+
+    def get_profile_raw(self, user_id: str) -> dict:
+        """
+        Returns the raw Redis hash for the analyst detail panel.
+        S8's GET /users/{id} endpoint uses this to show full account stats.
+        """
+        return self._r.hgetall(self._hash_key(user_id))
+
+    # ── BULK SEED (demo / pre-warming) ───────────────────────────
 
     def seed_demo_profiles(self, profiles: list[dict]) -> int:
         """
-        Pre-warm the store with demo profiles so the UI shows
-        realistic per-user data from the first request.
+        Pre-warm the store with demo profiles so the dashboard shows
+        realistic per-user data from the very first request.
 
-        Each dict in profiles should have:
+        Each dict should have:
             user_id, mean_amount, std_amount, txn_count,
             device_ids (list), known_ips (list), account_age_days
         """
-        now  = time.time()
+        now    = time.time()
         seeded = 0
-        for p in profiles:
-            uid = p["user_id"]
 
-            # Welford: reconstruct M2 from mean + std
+        for p in profiles:
+            uid  = p["user_id"]
             n    = p.get("txn_count", 10)
             mean = p.get("mean_amount", _GLOBAL_MEDIAN_AMOUNT)
-            std  = p.get("std_amount", _GLOBAL_STD_AMOUNT * 0.1)
+            std  = p.get("std_amount",  _GLOBAL_STD_AMOUNT * 0.1)
             M2   = (std ** 2) * (n - 1) if n > 1 else 0.0
 
+            # FIX Bug 1 consistency: seed first_txn_ts using account_age_days
             first_ts = now - p.get("account_age_days", 30) * 86_400
 
             hk = self._hash_key(uid)
@@ -475,8 +456,8 @@ class ProfileStore:
             self._r.expire(dk, PROFILE_TTL_SECONDS)
 
             ik = self._ip_key(uid)
-            for ip in p.get("known_ips", ["192.168.1.1"]):
-                self._r.sadd(ik, ip)
+            for ip_addr in p.get("known_ips", ["192.168.1.1"]):
+                self._r.sadd(ik, ip_addr)
             self._r.expire(ik, PROFILE_TTL_SECONDS)
 
             seeded += 1
@@ -485,8 +466,7 @@ class ProfileStore:
 
 
 # ─────────────────────────────────────────────
-# DEMO PROFILES (pre-warms the store for UI)
-# Matches the mock transactions in mockData.js
+# DEMO PROFILES (matches mockData.js in the UI)
 # ─────────────────────────────────────────────
 
 DEMO_PROFILES = [
@@ -536,11 +516,9 @@ DEMO_PROFILES = [
 
 
 # ─────────────────────────────────────────────
-# MODULE-LEVEL SINGLETON (imported by FastAPI)
+# MODULE-LEVEL SINGLETON
 # ─────────────────────────────────────────────
 
-# FastAPI imports this directly:
-#   from profile_store import store
 store = ProfileStore()
 
 
@@ -550,8 +528,6 @@ store = ProfileStore()
 # ─────────────────────────────────────────────
 
 def _self_test():
-    import random
-
     print("\n[S4] Profile Store Self-Test")
     print(f"     Backend: {'Real Redis' if USE_REAL_REDIS else 'fakeredis'}")
 
@@ -560,12 +536,11 @@ def _self_test():
     if not ps.ping():
         print("❌  Redis ping failed — check connection")
         return
-
     print("     ✓ Redis ping OK")
 
-    # 1. Cold-start — brand new user
+    # ── Test 1: Cold-start ────────────────────────────────────────
     uid = "test_user_selftest"
-    ps.delete_profile(uid)  # ensure clean state
+    ps.delete_profile(uid)
 
     snap = ps.get_profile(uid, device_id="dev_A", ip="1.2.3.4")
     assert snap.is_new_user,         "Expected new_user=True on cold start"
@@ -575,64 +550,93 @@ def _self_test():
     assert snap.mean_txn_amount == _GLOBAL_MEDIAN_AMOUNT
     print("     ✓ Cold-start snapshot correct")
 
-    # 2. Update profile, then re-read
-    now = time.time()
+    # ── Test 2: Update then re-read ───────────────────────────────
+    now     = time.time()
     amounts = [100.0, 200.0, 150.0, 130.0, 175.0]
     for amt in amounts:
         ps.update_profile(uid, device_id="dev_A", ip="1.2.3.4",
                           amount=amt, now_ts=now)
-        now += 60  # 1 minute apart
+        now += 60
 
     snap2 = ps.get_profile(uid, device_id="dev_A", ip="1.2.3.4", now_ts=now)
-    assert not snap2.is_new_user,                               "Should not be new user after updates"
-    assert not snap2.is_new_device,                             "dev_A should be known"
-    assert not snap2.is_new_ip,                                 "1.2.3.4 should be known"
-    assert snap2.txn_count_total == len(amounts),               f"Expected {len(amounts)}, got {snap2.txn_count_total}"
-    assert snap2.txn_count_last_1h == len(amounts),             "All txns should be in 1h window"
+    assert not snap2.is_new_user
+    assert not snap2.is_new_device
+    assert not snap2.is_new_ip
+    assert snap2.txn_count_total == len(amounts), \
+        f"Expected {len(amounts)}, got {snap2.txn_count_total}"
+    assert snap2.txn_count_last_1h == len(amounts), \
+        "All txns should be in 1h window"
     expected_mean = sum(amounts) / len(amounts)
-    assert abs(snap2.mean_txn_amount - expected_mean) < 0.01,   f"Mean {snap2.mean_txn_amount:.2f} != {expected_mean:.2f}"
+    assert abs(snap2.mean_txn_amount - expected_mean) < 0.01, \
+        f"Mean {snap2.mean_txn_amount:.2f} != {expected_mean:.2f}"
     print(f"     ✓ Profile updated: mean={snap2.mean_txn_amount:.2f}  "
           f"std={snap2.std_txn_amount:.2f}  total={snap2.txn_count_total}")
 
-    # 3. New device triggers is_new_device=True
+    # ── Test 3: account_age_days is correct (FIX Bug 1 verification) ─
+    # After update_profile, account_age_days must be ~30 days, NOT 0.
+    assert snap2.account_age_days > 29.9, \
+        f"Bug 1 regression: account_age_days={snap2.account_age_days:.2f} (expected ~30)"
+    print(f"     ✓ account_age_days correct: {snap2.account_age_days:.2f}d (Bug 1 fix verified)")
+
+    # ── Test 4: Same-timestamp velocity collision (FIX Bug 2) ─────
+    uid_vel = "test_user_collision"
+    ps.delete_profile(uid_vel)
+    same_ts = time.time()
+    # Write 5 txns at the exact same timestamp — in the old code 4 of 5
+    # would be silently dropped.
+    for _ in range(5):
+        ps.update_profile(uid_vel, "dev_A", "1.2.3.4",
+                          amount=50.0, now_ts=same_ts)
+
+    snap_vel = ps.get_profile(uid_vel, "dev_A", "1.2.3.4",
+                               now_ts=same_ts + 1)
+    assert snap_vel.txn_count_last_1h == 5, \
+        f"Bug 2 regression: expected 5 txns, got {snap_vel.txn_count_last_1h}"
+    print(f"     ✓ Same-timestamp collision fixed: {snap_vel.txn_count_last_1h}/5 counted (Bug 2 fix verified)")
+
+    # ── Test 5: New device detection ─────────────────────────────
     snap3 = ps.get_profile(uid, device_id="dev_NEW", ip="1.2.3.4", now_ts=now)
-    assert snap3.is_new_device,    "New device should be flagged"
-    assert not snap3.is_new_ip,    "Known IP should not be flagged"
+    assert snap3.is_new_device,    "New device must be flagged"
+    assert not snap3.is_new_ip,    "Known IP must not be flagged"
     assert snap3.device_count_seen == 1
     print("     ✓ New device detection correct")
 
-    # 4. New IP triggers is_new_ip=True
+    # ── Test 6: New IP detection ──────────────────────────────────
     snap4 = ps.get_profile(uid, device_id="dev_A", ip="9.9.9.9", now_ts=now)
-    assert not snap4.is_new_device, "Known device should not be flagged"
-    assert snap4.is_new_ip,         "New IP should be flagged"
+    assert not snap4.is_new_device, "Known device must not be flagged"
+    assert snap4.is_new_ip,         "New IP must be flagged"
     print("     ✓ New IP detection correct")
 
-    # 5. Velocity window test — add txns spanning across 1h boundary
-    uid2 = "test_user_velocity"
+    # ── Test 7: Velocity windows ──────────────────────────────────
+    uid2     = "test_user_velocity"
     ps.delete_profile(uid2)
-    base_ts = time.time() - 7200  # 2 hours ago
+    base_ts  = time.time() - 7200   # 2 hours ago
     for i in range(10):
         ps.update_profile(uid2, "dev_v", "5.5.5.5",
-                          amount=50.0, now_ts=base_ts + i * 300)  # every 5min
+                          amount=50.0, now_ts=base_ts + i * 300)
 
     snap5 = ps.get_profile(uid2, "dev_v", "5.5.5.5", now_ts=time.time())
-    # All 10 are >1h old → 1h count should be 0
-    assert snap5.txn_count_last_1h == 0,  f"Expected 0 in 1h, got {snap5.txn_count_last_1h}"
-    assert snap5.txn_count_last_24h == 10, f"Expected 10 in 24h, got {snap5.txn_count_last_24h}"
-    print(f"     ✓ Velocity windows correct: 1h={snap5.txn_count_last_1h}  24h={snap5.txn_count_last_24h}")
+    assert snap5.txn_count_last_1h == 0,  \
+        f"Expected 0 in 1h, got {snap5.txn_count_last_1h}"
+    assert snap5.txn_count_last_24h == 10, \
+        f"Expected 10 in 24h, got {snap5.txn_count_last_24h}"
+    print(f"     ✓ Velocity windows: 1h={snap5.txn_count_last_1h}  24h={snap5.txn_count_last_24h}")
 
-    # 6. Seed demo profiles
+    # ── Test 8: Seed demo profiles ────────────────────────────────
     seeded = ps.seed_demo_profiles(DEMO_PROFILES)
     print(f"     ✓ Seeded {seeded} demo profiles")
 
     snap_demo = ps.get_profile("usr_alex92", "dev_NEW_device", "185.220.0.1")
-    assert not snap_demo.is_new_user,  "Demo user should exist after seeding"
-    assert snap_demo.is_new_device,    "New device on demo user should be flagged"
-    assert snap_demo.is_new_ip,        "Attacker IP should be flagged"
-    print(f"     ✓ Demo profile usr_alex92: mean={snap_demo.mean_txn_amount:.0f}  "
-          f"is_new_device={snap_demo.is_new_device}  is_new_ip={snap_demo.is_new_ip}")
+    assert not snap_demo.is_new_user
+    assert snap_demo.is_new_device
+    assert snap_demo.is_new_ip
+    assert snap_demo.account_age_days > 419, \
+        f"Seeded account_age_days wrong: {snap_demo.account_age_days:.1f}"
+    print(f"     ✓ Demo usr_alex92: mean={snap_demo.mean_txn_amount:.0f}  "
+          f"age={snap_demo.account_age_days:.0f}d  "
+          f"new_device={snap_demo.is_new_device}")
 
-    # 7. to_feature_dict has correct keys
+    # ── Test 9: to_feature_dict key contract ─────────────────────
     feat = snap_demo.to_feature_dict()
     expected_keys = {
         "is_new_device", "is_new_ip", "device_count_seen",
@@ -640,15 +644,22 @@ def _self_test():
         "inter_txn_seconds", "account_age_days",
         "mean_txn_amount", "std_txn_amount", "txn_count_total",
     }
-    assert expected_keys == set(feat.keys()), f"Feature dict keys mismatch: {set(feat.keys())}"
-    print(f"     ✓ to_feature_dict keys: {sorted(feat.keys())}")
+    assert expected_keys == set(feat.keys()), \
+        f"Feature key mismatch: {set(feat.keys())}"
+    print(f"     ✓ to_feature_dict keys correct")
+
+    # ── Test 10: get_profile_raw ──────────────────────────────────
+    raw = ps.get_profile_raw("usr_alex92")
+    assert "welford_mean" in raw, "get_profile_raw must return hash fields"
+    print("     ✓ get_profile_raw works")
 
     # Cleanup
     ps.delete_profile(uid)
     ps.delete_profile(uid2)
+    ps.delete_profile(uid_vel)
 
     print("\n✅  S4 Self-Test PASSED — Profile Store ready for S8 (FastAPI)")
-    print("    Next → Stage S6: python backend/ato_detector.py")
+    print("    Next → Stage S8: python backend/main.py\n")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ import { TrendingUp, TrendingDown, Shield, AlertTriangle, CheckCircle, Clock } f
 import Topbar from '../components/Topbar';
 import { StatCard, RiskScoreBadge, ScoreBar, AlertSeverityDot } from '../components/UIKit';
 import { HOURLY_VOLUME, SCORE_DISTRIBUTION, TRANSACTIONS, RECENT_ALERTS } from '../data/mockData';
+import { fetchStats, fetchModelPerformance, useLiveWebSocket } from '../api';
 
 function CustomTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
@@ -23,20 +24,26 @@ function CustomTooltip({ active, payload, label }) {
 }
 
 export default function Dashboard() {
-  const [txns, setTxns] = useState(TRANSACTIONS);
+  const [stats, setStats] = useState(null);
+  const [performance, setPerformance] = useState(null);
+  const { messages: liveTxns, isConnected } = useLiveWebSocket();
 
-  // simulate new transaction streaming in
+  // Initial load
   useEffect(() => {
-    const int = setInterval(() => {
-      const newTxn = {
-        ...TRANSACTIONS[Math.floor(Math.random() * TRANSACTIONS.length)],
-        id: `TXN-${Math.floor(8900 + Math.random() * 100)}`,
-        time: new Date().toLocaleTimeString('en-US', { hour12: false }),
-      };
-      setTxns(prev => [newTxn, ...prev.slice(0, 9)]);
-    }, 4000);
-    return () => clearInterval(int);
+    fetchStats().then(setStats).catch(console.error);
+    fetchModelPerformance().then(setPerformance).catch(console.error);
   }, []);
+
+  // For charts and fallback table we keep mockData as placeholders
+  const displayTxns = liveTxns.length > 0 ? liveTxns.map(msg => ({
+    id: msg?.transaction_id?.slice(0, 8) || "TXN-???",
+    user: msg?.user_id || "unknown",
+    amount: msg?.amount_usd || 0,
+    merchant: msg?.top_reason || "Online Store", 
+    score: msg?.score || 0,
+    decision: msg?.decision || "approve",
+    time: msg?.timestamp_utc ? new Date(msg.timestamp_utc * 1000).toLocaleTimeString('en-US', { hour12: false }) : "--",
+  })) : TRANSACTIONS;
 
   return (
     <div>
@@ -45,10 +52,10 @@ export default function Dashboard() {
 
         {/* STAT CARDS */}
         <div className="grid-4">
-          <StatCard label="Transactions Today"  value="18,472"  delta="12.4% vs yesterday" deltaUp={true}  icon="💳" color="#6366f1" />
-          <StatCard label="Blocked (Fraud)"     value="342"     delta="↑ 8 in last hour"   deltaUp={false} icon="🛡️" color="#f43f5e" />
-          <StatCard label="MFA Challenged"      value="891"     delta="4.8% of volume"     deltaUp={null}  icon="🔐" color="#f59e0b" />
-          <StatCard label="Avg Decision Time"   value="43ms"    delta="SLA: <100ms ✓"      deltaUp={true}  icon="⚡" color="#10b981" />
+          <StatCard label="Transactions Today"  value={stats?.total_scored?.toLocaleString() || "..."}  delta="Live Engine" deltaUp={true}  icon="💳" color="#6366f1" />
+          <StatCard label="Blocked (Fraud)"     value={stats?.blocked?.toLocaleString() || "..."}     delta={stats?.block_rate_pct != null ? `${stats.block_rate_pct.toFixed(2)}% rate` : ""}   deltaUp={false} icon="🛡️" color="#f43f5e" />
+          <StatCard label="MFA Challenged"      value={stats?.mfa?.toLocaleString() || "..."}     delta={stats?.active_ato_chains + " active ATOs"}     deltaUp={null}  icon="🔐" color="#f59e0b" />
+          <StatCard label="Avg Decision Time"   value={(stats?.avg_latency_ms || "43") + "ms"}    delta="SLA: <100ms ✓"      deltaUp={true}  icon="⚡" color="#10b981" />
         </div>
 
         {/* CHARTS ROW */}
@@ -113,7 +120,7 @@ export default function Dashboard() {
                 <div className="live-dot" />
                 <span className="section-title" style={{ fontSize: 12 }}>Live Transaction Feed</span>
               </div>
-              <span className="mono" style={{ color: 'var(--text-muted)' }}>{txns.length} active</span>
+              <span className="mono" style={{ color: 'var(--text-muted)' }}>{displayTxns.length} active</span>
             </div>
             <div style={{ overflowX: 'auto' }}>
               <table className="data-table">
@@ -122,14 +129,14 @@ export default function Dashboard() {
                     <th>TXN ID</th>
                     <th>User</th>
                     <th>Amount</th>
-                    <th>Merchant</th>
+                    <th>Top Feature Reason</th>
                     <th>Risk Score</th>
                     <th>Decision</th>
                     <th>Time</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {txns.slice(0, 8).map((txn, i) => (
+                  {displayTxns.slice(0, 8).map((txn, i) => (
                     <tr key={txn.id + i} className="animate-in" style={{ animationDelay: `${i * 30}ms` }}>
                       <td>
                         <span className="mono" style={{ color: 'var(--accent-indigo)' }}>{txn.id}</span>
@@ -139,7 +146,7 @@ export default function Dashboard() {
                       <td><span style={{ fontWeight: 600 }}>${txn.amount.toLocaleString()}</span></td>
                       <td><span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{txn.merchant}</span></td>
                       <td><ScoreBar score={txn.score} /></td>
-                      <td><RiskScoreBadge score={txn.score} /></td>
+                      <td><RiskScoreBadge score={txn.score} decision={txn.decision} /></td>
                       <td><span className="mono" style={{ color: 'var(--text-muted)' }}>{txn.time}</span></td>
                     </tr>
                   ))}
@@ -171,10 +178,10 @@ export default function Dashboard() {
             <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
               <span className="section-title" style={{ marginBottom: 12, display: 'block' }}>Model Health</span>
               {[
-                { label: 'Precision', val: '96.5%', color: '#10b981' },
-                { label: 'Recall', val: '94.7%', color: '#6366f1' },
-                { label: 'F1 Score', val: '95.6%', color: '#8b5cf6' },
-                { label: 'Model Ver', val: 'v2.4.1', color: '#06b6d4' },
+                { label: 'Precision', val: performance ? `${(performance.precision * 100).toFixed(1)}%` : '...', color: '#10b981' },
+                { label: 'Recall', val: performance ? `${(performance.recall * 100).toFixed(1)}%` : '...', color: '#6366f1' },
+                { label: 'F1 Score', val: performance ? `${(performance.f1_score * 100).toFixed(1)}%` : '...', color: '#8b5cf6' },
+                { label: 'Model Ver', val: performance?.current_version || '...', color: '#06b6d4' },
               ].map(kpi => (
                 <div key={kpi.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0' }}>
                   <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{kpi.label}</span>

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Topbar from '../components/Topbar';
 import { RiskScoreBadge, ScoreBar } from '../components/UIKit';
 import { TRANSACTIONS, SHAP_FEATURES } from '../data/mockData';
+import { useLiveWebSocket } from '../api';
 import { X, ChevronRight, Cpu, MapPin, Monitor, Clock, AlertOctagon } from 'lucide-react';
 
 function ShapWaterfall({ features }) {
@@ -129,9 +130,10 @@ function TxnDetailPanel({ txn, onClose }) {
             background: 'rgba(244,63,94,0.06)', border: '1px solid rgba(244,63,94,0.15)',
             borderRadius: 8, padding: '12px 14px', marginBottom: 14, fontSize: 12, color: '#fca5a5', lineHeight: 1.6
           }}>
-            🔍 Top reason: <b>Amount is 12× user average</b> · New device fingerprint · ATO chain active
+            🔍 Top reason: <b>{txn.merchant}</b>
           </div>
-          <ShapWaterfall features={SHAP_FEATURES} />
+          {/* Note: In a real system, the features would be pulled out of txn.raw.shap_features. Currently using mock SHAP_FEATURES for aesthetic purposes */}
+          <ShapWaterfall features={txn.raw?.shap_features || SHAP_FEATURES} />
         </div>
 
         {/* Actions */}
@@ -150,21 +152,26 @@ function TxnDetailPanel({ txn, onClose }) {
 export default function LiveFeed() {
   const [selected, setSelected] = useState(null);
   const [filter, setFilter] = useState('all');
-  const [txns, setTxns] = useState(TRANSACTIONS);
+  const { messages: liveTxns, isConnected } = useLiveWebSocket();
 
-  useEffect(() => {
-    const int = setInterval(() => {
-      const newTxn = {
-        ...TRANSACTIONS[Math.floor(Math.random() * TRANSACTIONS.length)],
-        id: `TXN-${Math.floor(8900 + Math.random() * 100)}`,
-        time: new Date().toLocaleTimeString('en-US', { hour12: false }),
-      };
-      setTxns(prev => [newTxn, ...prev.slice(0, 19)]);
-    }, 3000);
-    return () => clearInterval(int);
-  }, []);
+  // If no live transactions yet, use a slice of mock data as a fallback/skeleton
+  const baseTxns = liveTxns.length > 0 ? liveTxns.map(msg => ({
+    id: msg.transaction_id,
+    user: msg.user_id,
+    amount: msg.amount_usd,
+    merchant: msg.top_reason || "Online Store", // mapped feature name
+    type: "ecommerce", // static or derive if possible
+    location: "Unknown", 
+    device: "Unknown",
+    score: msg.score,
+    decision: msg.decision,
+    flags: ["Model Flag"], // Replace with actual flags if any
+    time: new Date(msg.timestamp_utc * 1000).toLocaleTimeString('en-US', { hour12: false }),
+    // store raw for details
+    raw: msg
+  })) : TRANSACTIONS.slice(0, 5);
 
-  const filtered = filter === 'all' ? txns : txns.filter(t => t.decision === filter);
+  const filtered = filter === 'all' ? baseTxns : baseTxns.filter(t => t.decision === filter);
 
   return (
     <div>

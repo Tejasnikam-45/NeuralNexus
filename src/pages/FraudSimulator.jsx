@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import Topbar from '../components/Topbar';
 import { RiskScoreBadge, ScoreBar } from '../components/UIKit';
+import { simulateTransactions } from '../api';
 import { Play, Square, RotateCcw, Zap } from 'lucide-react';
 
 const SCENARIOS = [
@@ -41,20 +42,42 @@ export default function FraudSimulator() {
   const [speed, setSpeed] = useState(600);
   const intRef = useRef(null);
 
-  const runSimulation = () => {
+  const runSimulation = async () => {
     setRunning(true);
     setResults([]);
-    const txns = generateTxns(selected.id);
-    let i = 0;
-    intRef.current = setInterval(() => {
-      if (i >= txns.length) {
-        clearInterval(intRef.current);
-        setRunning(false);
-        return;
-      }
-      setResults(prev => [...prev, { ...txns[i], score: Math.floor(Math.random() * 55) + 40 + (i * 3) }]);
-      i++;
-    }, speed);
+    
+    // Map scenario to fraud_pct and count for the API
+    const count = selected.id === 'card_fraud' ? 8 : selected.id === 'fraud_ring' ? 6 : 4;
+    const fraudPct = selected.id === 'legit_spike' ? 0.0 : 0.8;
+    
+    try {
+      const resp = await simulateTransactions(count, fraudPct);
+      const txns = resp.results;
+      
+      let i = 0;
+      intRef.current = setInterval(() => {
+        if (i >= txns.length) {
+          clearInterval(intRef.current);
+          setRunning(false);
+          return;
+        }
+        const t = txns[i];
+        setResults(prev => [...prev, {
+          id: t.transaction_id,
+          user: t.user_id,
+          amount: t.amount_usd,
+          merchant: selected.id === 'legit_spike' ? 'Online Store' : 'Suspicious Merchant',
+          score: Math.round(t.score),
+          decision: t.decision,
+          ato: t.simulated_fraud,
+          time: new Date().toLocaleTimeString('en-US', { hour12: false })
+        }]);
+        i++;
+      }, speed);
+    } catch (err) {
+      console.error(err);
+      setRunning(false);
+    }
   };
 
   const stop = () => {
