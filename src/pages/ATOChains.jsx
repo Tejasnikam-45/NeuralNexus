@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Topbar from '../components/Topbar';
 import { ATO_CHAIN_EVENTS } from '../data/mockData';
 import { ShieldAlert, Link, UserX, CreditCard, ChevronDown, ChevronUp } from 'lucide-react';
-import { fetchATOChains } from '../api';
+import { fetchATOChains, submitFeedback } from '../api';
 
 const MOCK_CHAINS = []; // Real ones hit below
 
@@ -18,7 +18,7 @@ const severityBg = {
   blocked: 'rgba(139,92,246,0.12)',
 };
 
-function ChainCard({ chain }) {
+function ChainCard({ chain, onResolve }) {
   const [expanded, setExpanded] = useState(true);
 
   return (
@@ -127,7 +127,11 @@ function ChainCard({ chain }) {
             )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 16 }}>
-              <button className="btn btn-danger" style={{ justifyContent: 'center', fontSize: 12 }}>🔒 Lock Account</button>
+              <button 
+                className="btn btn-danger" 
+                style={{ justifyContent: 'center', fontSize: 12 }}
+                onClick={() => onResolve && onResolve(chain)}
+              >🔒 Lock Account</button>
               <button className="btn btn-ghost" style={{ justifyContent: 'center', fontSize: 12 }}>📋 Escalate to L2</button>
             </div>
           </div>
@@ -141,27 +145,43 @@ export default function ATOChains() {
   const [chains, setChains] = useState([]);
   const [stats, setStats] = useState({ active:0, resolved:0 });
 
+  const handleResolve = async (chain) => {
+    try {
+      await submitFeedback({
+        transaction_id: 'ATO_MANUAL_LOCK',
+        user_id: chain.user,
+        label: 'fraud',
+        chain_id: chain.id,
+        notes: 'Account manually locked by analyst'
+      });
+      setChains(prev => prev.filter(c => c.id !== chain.id));
+      setStats(prev => ({ ...prev, active: Math.max(0, prev.active - 1), resolved: prev.resolved + 1 }));
+    } catch (err) {
+      console.error('Failed to lock account', err);
+    }
+  };
+
   useEffect(() => {
     fetchATOChains().then(resp => {
       setStats({ active: resp.active_count, resolved: resp.resolved_today });
       setChains(resp.chains.map(c => ({
         id: c.chain_id,
         user: c.user_id,
-        risk: Math.round(c.risk_score),
+        risk: Math.round(c.risk_score || 0),
         status: c.status,
-        summary: c.summary,
-        events: c.events.map(e => ({
-            time: new Date(e.timestamp_utc * 1000).toLocaleTimeString('en-US', { hour12: false }),
-            label: e.detail,
-            detail: e.detail,
-            severity: e.severity,
+        summary: c.summary || 'Suspicious authentication sequence detected.',
+        events: (c.events || []).map(e => ({
+            time: new Date((e.timestamp_utc || 0) * 1000).toLocaleTimeString('en-US', { hour12: false }),
+            label: e.detail || 'Event',
+            detail: e.detail || '',
+            severity: e.severity || 'high',
             icon: '⚠'
         })),
         linkedAccounts: c.linked_account_ids || [c.user_id],
-        device: c.linked_device_id,
-        ip: c.attacker_ip,
-        startTime: new Date(c.start_time_utc * 1000).toLocaleTimeString('en-US'),
-        endTime: c.end_time_utc ? new Date(c.end_time_utc * 1000).toLocaleTimeString('en-US') : 'Ongoing',
+        device: c.linked_device || 'Unknown',
+        ip: c.attacker_ip || 'Unknown',
+        startTime: new Date((c.start_time || Date.now()/1000) * 1000).toLocaleTimeString('en-US'),
+        endTime: c.end_time ? new Date(c.end_time * 1000).toLocaleTimeString('en-US') : 'Ongoing',
         duration: c.duration_seconds ? `${c.duration_seconds}s` : '...',
       })));
     }).catch(console.error);
@@ -207,7 +227,7 @@ export default function ATOChains() {
         </div>
 
         {/* Chain Cards */}
-        {chains.map(chain => <ChainCard key={chain.id} chain={chain} />)}
+        {chains.map(chain => <ChainCard key={chain.id} chain={chain} onResolve={handleResolve} />)}
         {chains.length === 0 && (
             <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>No ATO chains detected currently.</div>
         )}
