@@ -1,0 +1,44 @@
+# NeuralNexus — Python Backend Dependencies
+# Install: pip install -r requirements.txt
+# Python >= 3.10 required (for match/case and type hints)
+
+# ── Core ML ──────────────────────────────────
+xgboost>=1.7.6
+scikit-learn>=1.3.0
+optuna>=3.3.0
+shap>=0.43.0
+
+# ── Deep Learning (Autoencoder) ───────────────
+torch>=2.0.0           # or use tensorflow/keras if preferred
+
+# ── Data ──────────────────────────────────────
+pandas>=2.0.3
+numpy>=1.24.0
+pyarrow>=13.0.0        # for parquet read/write
+
+# ── API ───────────────────────────────────────
+fastapi>=0.103.0
+uvicorn[standard]>=0.23.0
+websockets>=11.0
+python-multipart>=0.0.6
+
+# ── Storage ───────────────────────────────────
+redis>=5.0.0
+fakeredis>=2.20.0      # zero-setup Redis for demo/dev
+
+# ── Scheduling ────────────────────────────────
+apscheduler>=3.10.4
+
+# ── Experiment tracking ───────────────────────
+mlflow>=2.7.0
+
+# ── Graph ─────────────────────────────────────
+networkx>=3.2.0
+python-louvain>=0.16   # Louvain community detection
+
+# ── Clustering (S9 synthetic identity) ────────
+# scikit-learn already covers DBSCAN
+
+# ── Utilities ─────────────────────────────────
+joblib>=1.3.2
+python-dotenv>=1.0.0   # for loading .env (ATO_WINDOW_SECONDS etc.)

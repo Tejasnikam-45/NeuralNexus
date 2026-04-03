@@ -1,0 +1,29 @@
+{
+  "total_rows": 6362620,
+  "fraud_rows": 8213,
+  "legit_rows": 6354407,
+  "fraud_rate_pct": 0.1291,
+  "scale_pos_weight": 773.7,
+  "unique_users": 6353307,
+  "amount_mean": 179861.890625,
+  "amount_std": 603858.25,
+  "amount_max": 92445520.0,
+  "steps_range": [
+    1,
+    743
+  ],
+  "type_counts": {
+    "CASH_OUT": 2237500,
+    "PAYMENT": 2151495,
+    "CASH_IN": 1399284,
+    "TRANSFER": 532909,
+    "DEBIT": 41432
+  },
+  "fraud_by_type": {
+    "CASH_OUT": 4116,
+    "TRANSFER": 4097,
+    "CASH_IN": 0,
+    "DEBIT": 0,
+    "PAYMENT": 0
+  }
+}

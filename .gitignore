@@ -22,3 +22,23 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Data & Models (DO NOT COMMIT)
+data/raw/
+data/processed/
+models/
+mlruns/
+*.csv
+*.parquet
+*.pt
+*.pkl
+*.h5
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+venv/
+env/
+.venv/
