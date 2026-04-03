@@ -229,6 +229,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     # With 6.3M mostly-unique PaySim users, storing sets wastes ~1GB.
     user_device_count:  dict[str, int]   = {}   # how many distinct devices seen
     user_device_bucket: dict[str, str]   = {}   # last device bucket (for is_new_device)
+    user_ip_bucket:     dict[str, str]   = {}   # last IP bucket
 
     # ── Feature arrays (pre-allocate for speed) ────────────────
     # Transaction-level raws
@@ -264,6 +265,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
             user_first_step[uid]    = step
             user_device_count[uid]  = 0
             user_device_bucket[uid] = ""
+            user_ip_bucket[uid]     = ""
             # Simulate a home location (stable per user)
             user_base_lat[uid] = rng.uniform(-60, 70)
             user_base_lon[uid] = rng.uniform(-170, 170)
@@ -275,21 +277,38 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         std_amt  = wacc.std
 
         # ── Simulate device fingerprint ────────────────────────
-        # Fraud transactions get a "new" simulated device bucket.
-        # Use count-only tracking to avoid storing large sets per user.
+        # Fraud transactions usually get a "new" simulated device bucket.
         device_bucket = f"{step // 50}"     # ~50 steps per device period
         if fraud:
-            device_bucket = f"NEW_{step}"   # always new device for fraud
+            if rng.random() < 0.85:
+                device_bucket = f"NEW_{step}"
+        else:
+            if rng.random() < 0.05:
+                device_bucket = f"NEW_LEGIT_{step}"
         is_new_device = int(device_bucket != user_device_bucket[uid])
 
+        # ── Simulate IP ────────────────────────────────────────
+        ip_bucket = f"ip_{uid[-4:]}"  # stable per user proxy
+        if fraud and rng.random() < 0.85:
+            ip_bucket = f"ip_NEW_{step}"
+        is_new_ip = int(ip_bucket != user_ip_bucket.get(uid, ""))
+
         # ── Simulate geo ───────────────────────────────────────
-        # Legit: near home; Fraud: random location
+        # Legit: mostly near home; Fraud: usually random location
         if fraud:
-            cur_lat = rng.uniform(-60, 70)
-            cur_lon = rng.uniform(-170, 170)
+            if rng.random() < 0.8:
+                cur_lat = rng.uniform(-60, 70)
+                cur_lon = rng.uniform(-170, 170)
+            else:
+                cur_lat = user_base_lat[uid] + rng.normal(0, 0.5)
+                cur_lon = user_base_lon[uid] + rng.normal(0, 0.5)
         else:
-            cur_lat = user_base_lat[uid] + rng.normal(0, 0.5)
-            cur_lon = user_base_lon[uid] + rng.normal(0, 0.5)
+            if rng.random() < 0.02:
+                cur_lat = rng.uniform(-60, 70)
+                cur_lon = rng.uniform(-170, 170)
+            else:
+                cur_lat = user_base_lat[uid] + rng.normal(0, 0.5)
+                cur_lon = user_base_lon[uid] + rng.normal(0, 0.5)
 
         geo_dist = haversine_km(
             user_last_lat[uid], user_last_lon[uid], cur_lat, cur_lon
@@ -308,11 +327,8 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         hour_of_day = int(step % 24)
         day_of_week = int((step // 24) % 7)
         is_weekend  = int(day_of_week >= 5)
-        # Usual hours proxy: fraud tends to happen at 0–5 or 20–23
-        if fraud:
-            is_unusual_hour = int(hour_of_day < 22 and hour_of_day > 5)
-        else:
-            is_unusual_hour = int(hour_of_day < 6 or hour_of_day > 21)
+        # Usual hours proxy
+        is_unusual_hour = int(hour_of_day < 6 or hour_of_day > 21)
         hour_sin = math.sin(2 * math.pi * hour_of_day / 24)
         hour_cos = math.cos(2 * math.pi * hour_of_day / 24)
 
@@ -321,16 +337,16 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         cat_encoded       = MERCHANT_CATEGORY_ENCODING.get(merchant_cat, 4)
         is_blacklisted    = int(ttype in BLACKLISTED_MERCHANTS)
         is_high_risk_cat  = int(ttype in HIGH_RISK_TYPE_SET)
-        # New merchant proxy: fraud uses high-risk type they haven't used before
-        is_new_merchant   = int(fraud and is_high_risk_cat)
+        # New merchant proxy: first transaction in a high-risk category
+        is_new_merchant   = int(is_high_risk_cat and user_txn_count[uid] == 0)
 
         # ── Profile features (from rolling state) ──────────────
         txn_count_total = user_txn_count[uid]
         # Velocity: 1h window = steps within last 1 step (1 step ≈ 1 hr)
         # Approximated as txn_count over last few steps — simplified for training
-        txn_count_last_1h  = min(txn_count_total, int(rng.integers(1, 4)) if not fraud else int(rng.integers(5, 12)))
-        txn_count_last_24h = min(txn_count_total, txn_count_last_1h + int(rng.integers(0, 8)))
-        txn_count_last_7d  = min(txn_count_total, txn_count_last_24h + int(rng.integers(0, 20)))
+        txn_count_last_1h  = min(user_txn_count[uid], int(rng.integers(1, 5)))
+        txn_count_last_24h = min(user_txn_count[uid], txn_count_last_1h + int(rng.integers(0, 6)))
+        txn_count_last_7d  = min(user_txn_count[uid], txn_count_last_24h + int(rng.integers(0, 15)))
         velocity_spike     = int(txn_count_last_1h > 5)
         inter_txn_sec      = float(steps_elapsed * 3600)  # 1 step = 1 hour
 
@@ -374,10 +390,10 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         out["is_new_merchant"][i]           = is_new_merchant
 
         out["is_new_device"][i]             = is_new_device
-        out["is_new_ip"][i]                 = int(fraud)  # fraud always gets new IP in sim
+        out["is_new_ip"][i]                 = is_new_ip
         out["is_tor_or_vpn"][i]             = IS_TOR_VPN_TRAINING
         out["device_count_seen"][i]         = user_device_count[uid]
-        out["ip_country_code_changed"][i]   = int(fraud)
+        out["ip_country_code_changed"][i]   = is_new_ip
 
         out["txn_count_last_1h"][i]         = txn_count_last_1h
         out["txn_count_last_24h"][i]        = txn_count_last_24h
@@ -420,6 +436,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         if device_bucket != user_device_bucket[uid]:
             user_device_count[uid]  += 1
             user_device_bucket[uid]  = device_bucket
+        user_ip_bucket[uid] = ip_bucket
 
         if i % PRINT_EVERY == 0:
             pct = i / n * 100
@@ -431,7 +448,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     # With 6.3M unique PaySim users these dicts hold ~500MB+ combined.
     del user_welford, user_txn_count, user_last_step, user_first_step
     del user_last_lat, user_last_lon, user_base_lat, user_base_lon
-    del user_device_count, user_device_bucket
+    del user_device_count, user_device_bucket, user_ip_bucket
     import gc; gc.collect()
 
     # ── Build DataFrame ──────────────────────────────────────────

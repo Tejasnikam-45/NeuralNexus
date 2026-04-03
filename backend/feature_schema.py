@@ -295,26 +295,28 @@ def simulate_ato_features_for_row(is_fraud: bool) -> dict:
     Returns a dict of ATO feature values to inject into the feature matrix.
 
     Strategy:
-      - Fraud rows   → ATO chain plausibly active, high risk login
-      - Legit rows   → ATO chain not active (all zeros)
+      - Fraud rows   → High chance of ATO chain active
+      - Legit rows   → Small chance of false-positive ATO chain
     """
     if is_fraud:
+        chain_active = 1 if random.random() < 0.85 else 0
         return {
-            "ato_chain_active":               1,
-            "ato_chain_risk_score":           random.uniform(65, 95),
-            "seconds_since_suspicious_login": random.uniform(5, 280),
-            "login_new_device":               1,
-            "login_new_ip":                   random.randint(0, 1),   # 50/50
-            "login_mfa_failed":               1,
-            "login_profile_changed":          random.randint(0, 1),   # 50/50
+            "ato_chain_active":               chain_active,
+            "ato_chain_risk_score":           random.uniform(65, 95) if chain_active else 0.0,
+            "seconds_since_suspicious_login": random.uniform(5, 280) if chain_active else 9999.0,
+            "login_new_device":               1 if chain_active else 0,
+            "login_new_ip":                   random.randint(0, 1) if chain_active else 0,
+            "login_mfa_failed":               1 if chain_active else 0,
+            "login_profile_changed":          random.randint(0, 1) if chain_active else 0,
         }
     else:
+        chain_active = 1 if random.random() < 0.02 else 0  # 2% false positive rate
         return {
-            "ato_chain_active":               0,
-            "ato_chain_risk_score":           0.0,
-            "seconds_since_suspicious_login": 9999.0,  # sentinel = no chain
-            "login_new_device":               0,
-            "login_new_ip":                   0,
+            "ato_chain_active":               chain_active,
+            "ato_chain_risk_score":           random.uniform(40, 75) if chain_active else 0.0,
+            "seconds_since_suspicious_login": random.uniform(200, 3000) if chain_active else 9999.0,
+            "login_new_device":               random.randint(0, 1) if chain_active else 0,
+            "login_new_ip":                   random.randint(0, 1) if chain_active else 0,
             "login_mfa_failed":               0,
             "login_profile_changed":          0,
         }

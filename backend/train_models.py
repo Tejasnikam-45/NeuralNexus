@@ -266,18 +266,22 @@ def train_xgboost(
     for k, v in best.items():
         print(f"      {k}: {v}")
 
+    # ADDED: remove early stopping from the final refit!
+    # Instead, we just increase the n_estimators slightly from the early-stopped Optuna trial
+    best_no_es = {k: v for k, v in best.items() if k not in ["early_stopping_rounds", "eval_metric"]}
+    # If the exact iteration wasn't caught, just add 50 trees to what the trial suggested to be safe
+    best_no_es["n_estimators"] = max(150, best.get("n_estimators", 150) + 50)
+    
     print(f"\n    Refitting on full train set ({len(X_train):,} rows) …")
     t1 = time.time()
-    xgb_final = xgb.XGBClassifier(**best)
+    xgb_final = xgb.XGBClassifier(**best_no_es)
     xgb_final.fit(
         X_train, y_train,
-        eval_set=[(X_val, y_val)],
         verbose=False,
     )
-    print(f"    Refit done in {time.time()-t1:.1f}s  "
-          f"(best iteration: {xgb_final.best_iteration})")
+    print(f"    Refit done in {time.time()-t1:.1f}s")
 
-    mlflow.log_params({f"xgb_{k}": v for k, v in best.items()})
+    mlflow.log_params({f"xgb_{k}": v for k, v in best_no_es.items()})
     return xgb_final
 
 
@@ -334,6 +338,7 @@ def train_autoencoder(
     X_train: pd.DataFrame,
     y_train: np.ndarray,
     X_val:   pd.DataFrame,
+    y_val:   np.ndarray,
 ):
     print(f"\n[S5] Training PyTorch Autoencoder on {DEVICE} ...")
     t0 = time.time()
@@ -428,8 +433,12 @@ def train_autoencoder(
     with torch.no_grad():
         recon = ae_model(val_tensor)
         mse   = torch.mean((val_tensor - recon) ** 2, dim=1).cpu().numpy()
-    ae_scaler = MinMaxScaler(feature_range=(0, 100), clip=True)   # FIX 2: cap OOD scores at 100
-    ae_scaler.fit(mse.reshape(-1, 1))
+    
+    # FIX: Fit AE scaler only on legitimate validation rows to prevent 
+    # outliers from compressing the scaler range
+    ae_scaler = MinMaxScaler(feature_range=(0, 100), clip=True)
+    legit_mask = (y_val == 0)
+    ae_scaler.fit(mse[legit_mask].reshape(-1, 1))
 
     mlflow.log_param("ae_epochs_trained", epoch + 1)
     mlflow.log_param("ae_best_val_mse",   round(float(best_val_loss), 6))
@@ -512,6 +521,19 @@ def evaluate_models(X_test: pd.DataFrame, y_test: np.ndarray, models: dict) -> f
     })
     print(f"\n    ✓ Best threshold: {best_thresh}  F1={best_f1:.4f}  "
           f"TP={tp}  FP={fp}  FN={fn}")
+          
+    # ADDED: Save eval metrics directly to disk
+    eval_metrics = {
+        "aucpr": round(aucpr, 4),
+        "roc_auc": round(roc_auc, 4),
+        "best_f1": round(best_f1, 4),
+        "best_threshold": best_thresh,
+        "version": "v1.0.0",
+        "evaluated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    Path("models/eval_metrics.json").write_text(json.dumps(eval_metrics, indent=2))
+    print("    ✓ Saved models/eval_metrics.json")
+          
     return best_thresh
 
 
@@ -536,7 +558,7 @@ def save_metadata(best_threshold: float) -> None:
         "thresholds": {
             "approve": 40,
             "mfa":     70,
-            "block":   int(best_threshold),  # data-driven, not hardcoded
+            "block":   70,  # Hardcoded product-tier block decision
         },
         "models": {
             "xgb":     str(XGB_PATH),
@@ -588,7 +610,7 @@ def main():
         mlflow.log_artifact(ISO_PATH)
 
         # ── 4. Autoencoder ────────────────────────────────────────
-        ae_model, ae_in_scaler, ae_scaler = train_autoencoder(X_tr, y_tr, X_v)
+        ae_model, ae_in_scaler, ae_scaler = train_autoencoder(X_tr, y_tr, X_v, y_v)
         torch.save(ae_model.state_dict(), AE_PATH)
         print(f"    ✓ Saved {AE_PATH}")
         mlflow.log_artifact(AE_PATH)
