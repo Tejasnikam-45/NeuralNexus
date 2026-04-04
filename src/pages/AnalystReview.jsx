@@ -38,7 +38,7 @@ export default function AnalystReview() {
         id: q.transaction_id,
         user: q.user_id,
         score: Math.round(q.score),
-        amount: q.amount_usd,
+        amount: q.amount_inr || (q.amount_usd * 83.0) || 0,
         merchant: "Reason: " + q.shap_reasons?.[0]?.text?.substring(0,25) || "Unspecified",
         type: q.decision,
         flags: q.rule_triggers || [],

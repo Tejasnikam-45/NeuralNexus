@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import Topbar from '../components/Topbar';
 import { RiskScoreBadge, ScoreBar } from '../components/UIKit';
 import { TRANSACTIONS, SHAP_FEATURES } from '../data/mockData';
-import { useLiveWebSocket } from '../api';
-import { X, ChevronRight, ChevronLeft, Cpu, MapPin, Monitor, Clock, AlertOctagon } from 'lucide-react';
+import { useLiveWebSocket, resetSystem } from '../api';
+import { X, ChevronRight, ChevronLeft, Cpu, MapPin, Monitor, Clock, AlertOctagon, RefreshCw } from 'lucide-react';
 
 function ShapWaterfall({ features }) {
   const max = Math.max(...features.map(f => Math.abs(f.value)));
@@ -164,11 +164,11 @@ export default function LiveFeed() {
   const baseTxns = liveTxns.length > 0 ? liveTxns.map(msg => ({
     id: msg.transaction_id,
     user: msg.user_id,
-    amount: msg.amount_usd,
+    amount: msg.amount_inr || (msg.amount_usd * 83.0) || 0,
     merchant: msg.top_reason || "Online Store", // mapped feature name
     type: "ecommerce", // static or derive if possible
     location: "Unknown", 
-    device: "Unknown",
+    device: msg.device_id || "Unknown",
     score: msg.score,
     decision: msg.decision,
     flags: ["Model Flag"], // Replace with actual flags if any
@@ -207,9 +207,27 @@ export default function LiveFeed() {
               {f === 'all' ? '🌐 All' : f === 'approve' ? '✅ Approved' : f === 'mfa' ? '🔐 MFA' : '🚫 Blocked'}
             </button>
           ))}
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div className="live-dot" />
-            <span style={{ fontSize: 12, color: '#10b981', fontFamily: 'var(--font-mono)' }}>Streaming live</span>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button 
+              onClick={async () => {
+                if (window.confirm("Wipe system state for demo?")) {
+                  await resetSystem();
+                }
+              }}
+              className="btn"
+              style={{
+                background: 'rgba(244, 63, 94, 0.1)',
+                border: '1px solid rgba(244, 63, 94, 0.2)',
+                color: '#f43f5e',
+                fontSize: 10, padding: '4px 10px', fontWeight: 600, borderRadius: 4
+              }}
+            >
+              RESET SYSTEM
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div className="live-dot" />
+              <span style={{ fontSize: 12, color: '#10b981', fontFamily: 'var(--font-mono)' }}>Streaming live</span>
+            </div>
           </div>
         </div>
 

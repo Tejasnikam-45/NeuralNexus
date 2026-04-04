@@ -12,13 +12,13 @@ export default function Topbar({ title, subtitle }) {
   return (
     <header className="topbar">
       <div>
-        <h1 style={{ fontSize: 18, fontWeight: 700, lineHeight: 1.2 }}>{title}</h1>
-        {subtitle && <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{subtitle}</p>}
+        <h1 style={{ fontSize: 23, fontWeight: 900, lineHeight: 1.1, letterSpacing: '-0.03em' }}>{title}</h1>
+        {subtitle && <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{subtitle}</p>}
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         {/* Search */}
-        <div style={{
+        {/* <div style={{
           display: 'flex', alignItems: 'center', gap: 8,
           background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)',
           borderRadius: 8, padding: '7px 12px', minWidth: 200
@@ -32,7 +32,7 @@ export default function Topbar({ title, subtitle }) {
               fontFamily: 'Inter, sans-serif', width: '100%'
             }}
           />
-        </div>
+        </div> */}
 
         {/* Live clock */}
         <div style={{
@@ -47,7 +47,12 @@ export default function Topbar({ title, subtitle }) {
         </div>
 
         {/* Refresh */}
-        <button className="btn btn-ghost" style={{ padding: '7px 10px' }}>
+        <button
+          className="btn btn-ghost"
+          style={{ padding: '7px 10px' }}
+          onClick={() => window.location.reload()}
+          title="Refresh Dashboard"
+        >
           <RefreshCw size={14} />
         </button>
 
