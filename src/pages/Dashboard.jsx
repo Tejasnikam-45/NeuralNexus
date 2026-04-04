@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, Legend
@@ -54,6 +54,59 @@ export default function Dashboard() {
     time: msg?.timestamp_utc ? new Date(msg.timestamp_utc * 1000).toLocaleTimeString('en-US', { hour12: false }) : "--",
   })) : TRANSACTIONS;
 
+  // 1. Dynamic Hourly Volume
+  const hourlyData = useMemo(() => {
+    if (liveTxns.length === 0) return HOURLY_VOLUME;
+    // Bucket the last N transactions by short time intervals to show "recent" activity
+    const buckets = {};
+    liveTxns.forEach(t => {
+      const date = new Date(t.timestamp_utc * 1000);
+      const hour = date.getHours().toString().padStart(2, '0') + ':00';
+      if (!buckets[hour]) buckets[hour] = { hour, approved: 0, blocked: 0, mfa: 0 };
+      if (t.decision === 'block') buckets[hour].blocked++;
+      else if (t.decision === 'mfa') buckets[hour].mfa++;
+      else buckets[hour].approved++;
+    });
+    return Object.values(buckets).sort((a, b) => a.hour.localeCompare(b.hour));
+  }, [liveTxns]);
+
+  // 2. Dynamic Score Distribution
+  const scoreDist = useMemo(() => {
+    if (liveTxns.length === 0) return SCORE_DISTRIBUTION;
+    const bins = [
+      { range: '0-10',  min: 0, max: 10,  count: 0, fill: '#10b981' },
+      { range: '10-20', min: 10, max: 20, count: 0, fill: '#10b981' },
+      { range: '20-30', min: 20, max: 30, count: 0, fill: '#34d399' },
+      { range: '30-40', min: 30, max: 40, count: 0, fill: '#6ee7b7' },
+      { range: '40-50', min: 40, max: 50, count: 0, fill: '#f59e0b' },
+      { range: '50-60', min: 50, max: 60, count: 0, fill: '#fbbf24' },
+      { range: '60-70', min: 60, max: 70, count: 0, fill: '#fb923c' },
+      { range: '70-80', min: 70, max: 80, count: 0, fill: '#f43f5e' },
+      { range: '80-90', min: 80, max: 90, count: 0, fill: '#e11d48' },
+      { range: '90+',   min: 90, max: 101,count: 0, fill: '#9f1239' },
+    ];
+    liveTxns.forEach(t => {
+      const s = t.score;
+      const bin = bins.find(b => s >= b.min && s < b.max);
+      if (bin) bin.count++;
+    });
+    return bins;
+  }, [liveTxns]);
+
+  // 3. Dynamic Alerts
+  const dynamicAlerts = useMemo(() => {
+    const alerts = liveTxns
+      .filter(t => t.score >= 70)
+      .slice(0, 5)
+      .map(t => ({
+        id: t.transaction_id,
+        severity: t.score >= 85 ? 'critical' : 'high',
+        msg: `${t.score >= 85 ? 'Critical' : 'High'} risk for ${t.user_id} (${t.score})`,
+        time: new Date(t.timestamp_utc * 1000).toLocaleTimeString('en-US', { hour12: false }),
+      }));
+    return alerts.length > 0 ? alerts : RECENT_ALERTS;
+  }, [liveTxns]);
+
   return (
     <div>
       <Topbar title="Operations Dashboard" subtitle="Real-time fraud intelligence — pre-transaction decisioning" />
@@ -90,7 +143,7 @@ export default function Dashboard() {
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Today by hour</span>
             </div>
             <ResponsiveContainer width="100%" height={210}>
-              <AreaChart data={HOURLY_VOLUME}>
+              <AreaChart data={hourlyData}>
                 <defs>
                   <linearGradient id="gradApproved" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%"  stopColor="#6366f1" stopOpacity={0.3} />
@@ -119,13 +172,13 @@ export default function Dashboard() {
               <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>All transactions</span>
             </div>
             <ResponsiveContainer width="100%" height={210}>
-              <BarChart data={SCORE_DISTRIBUTION} barSize={18}>
+              <BarChart data={scoreDist} barSize={18}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
                 <XAxis dataKey="range" tick={{ fill: '#64748b', fontSize: 10 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: '#64748b', fontSize: 11 }} axisLine={false} tickLine={false} />
                 <Tooltip content={<CustomTooltip />} />
                 <Bar dataKey="count" name="Transactions" radius={[4, 4, 0, 0]}>
-                  {SCORE_DISTRIBUTION.map((entry, i) => (
+                  {scoreDist.map((entry, i) => (
                     <rect key={i} fill={entry.fill} />
                   ))}
                 </Bar>
@@ -166,7 +219,7 @@ export default function Dashboard() {
                         {txn.ato && <span className="badge badge-ato" style={{ marginLeft: 6, fontSize: 9 }}>ATO</span>}
                       </td>
                       <td><span className="mono" style={{ color: 'var(--text-secondary)' }}>{txn.user}</span></td>
-                      <td><span style={{ fontWeight: 600 }}>${txn.amount.toLocaleString()}</span></td>
+                      <td><span style={{ fontWeight: 600 }}>₹{txn.amount.toLocaleString()}</span></td>
                       <td><span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{txn.merchant}</span></td>
                       <td><ScoreBar score={txn.score} /></td>
                       <td><RiskScoreBadge score={txn.score} decision={txn.decision} /></td>
@@ -184,7 +237,7 @@ export default function Dashboard() {
               <span className="section-title">System Alerts</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {RECENT_ALERTS.map(alert => (
+              {dynamicAlerts.map(alert => (
                 <div key={alert.id} className="glass glass-hover" style={{ padding: '12px 14px', borderRadius: 10 }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                     <AlertSeverityDot severity={alert.severity} />

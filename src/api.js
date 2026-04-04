@@ -73,7 +73,7 @@ export function useLiveWebSocket() {
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'transaction') {
-            setMessages(prev => [data.data, ...prev].slice(0, 100)); // Keep last 100
+            setMessages(prev => [data.data, ...prev].slice(0, 1000)); // Keep last 1000
         } else if (data.type === 'snapshot') {
             setMessages(data.data);
         }

@@ -101,6 +101,8 @@ INR_SUSPICIOUS_LARGE = 5_000.0   # ₹5,000 — suspicious for new accounts
 INR_ROUND_THRESHOLD  = 5_000.0   # ₹5,000 — round amount alert threshold
 INR_MICRO_DEPOSIT    = 100.0     # ₹100 — micro-deposit probing ceiling
 
+USD_TO_INR = 90.0  # Standard conversion factor
+
 
 # ─────────────────────────────────────────────
 # RULE RESULT
@@ -268,22 +270,7 @@ def rule_impossible_travel(ctx: dict) -> RuleResult:
     return RuleResult("R03_IMPOSSIBLE_TRAVEL", False, None, 0.0, "", "low")
 
 
-# ════════════════════════════════════════════════
-#  R04: TOR / VPN  (unchanged)
-# ════════════════════════════════════════════════
 
-def rule_tor_or_vpn(ctx: dict) -> RuleResult:
-    """Boost if IP matches known TOR exit nodes or VPN ranges."""
-    ip = str(ctx.get("ip_address", ""))
-    triggered = any(ip.startswith(prefix) for prefix in TOR_AND_VPN_PREFIXES)
-    return RuleResult(
-        rule_id="R04_TOR_VPN",
-        triggered=triggered,
-        action=None,
-        score_boost=20.0 if triggered else 0.0,
-        reason=f"IP {ip} matches TOR/VPN prefix list",
-        severity="high" if triggered else "low",
-    )
 
 
 # ════════════════════════════════════════════════
@@ -299,9 +286,10 @@ def rule_new_account_high_amount(ctx: dict) -> RuleResult:
     """
     age_days   = float(ctx.get("account_age_days",          30.0))
     ratio      = float(ctx.get("amount_to_user_mean_ratio",  1.0))
-    amount     = float(ctx.get("amount_usd",                 0.0))
+    amount_usd = float(ctx.get("amount_usd",                 0.0))
+    amount_inr = amount_usd * USD_TO_INR
 
-    triggered = age_days < 30 and ratio > 5.0 and amount > INR_SUSPICIOUS_LARGE
+    triggered = age_days < 30 and ratio > 5.0 and amount_inr > INR_SUSPICIOUS_LARGE
     return RuleResult(
         rule_id="R05_NEW_ACCOUNT_HIGH_AMOUNT",
         triggered=triggered,
@@ -309,7 +297,7 @@ def rule_new_account_high_amount(ctx: dict) -> RuleResult:
         score_boost=20.0 if triggered else 0.0,
         reason=(
             f"New account ({age_days:.0f}d) sending "
-            f"{ratio:.1f}× their usual amount (₹{amount:,.0f})"
+            f"{ratio:.1f}× their usual amount (₹{amount_inr:,.0f})"
         ) if triggered else "",
         severity="high" if triggered else "low",
     )
@@ -372,21 +360,22 @@ def rule_amount_round_large(ctx: dict) -> RuleResult:
     Round amounts above ₹5,000 are a common fraud pattern (structuring/layering).
     INR-adjusted: ₹5,000 threshold for Indian UPI context (was $10,000).
     """
-    amount       = float(ctx.get("amount_usd", 0.0))
+    amount_usd   = float(ctx.get("amount_usd", 0.0))
+    amount_inr   = amount_usd * USD_TO_INR
     is_round     = bool(ctx.get("is_round_amount", False))
 
-    # Also detect amounts that are round in thousands
-    if not is_round and amount > 0:
-        is_round = amount % 1000.0 == 0.0
+    # Also detect amounts that are round in thousands (INR)
+    if not is_round and amount_inr > 0:
+        is_round = amount_inr % 1000.0 == 0.0
 
-    triggered    = is_round and amount >= INR_ROUND_THRESHOLD
+    triggered    = is_round and amount_inr >= INR_ROUND_THRESHOLD
 
     return RuleResult(
         rule_id="R08_ROUND_LARGE_AMOUNT",
         triggered=triggered,
         action=None,
         score_boost=10.0 if triggered else 0.0,
-        reason=f"Round amount ≥ ₹5,000 (₹{amount:,.0f}) — structuring pattern",
+        reason=f"Round amount ≥ ₹5,000 (₹{amount_inr:,.0f}) — structuring pattern",
         severity="medium" if triggered else "low",
     )
 
@@ -451,13 +440,14 @@ def rule_unusual_hour_high_amount(ctx: dict) -> RuleResult:
     Fraudsters prefer late-night hours when victims are asleep and
     less likely to notice unauthorized transactions immediately.
     """
-    hour    = int(ctx.get("hour_of_day", 12))
-    ratio   = float(ctx.get("amount_to_user_mean_ratio", 1.0))
-    amount  = float(ctx.get("amount_usd", 0.0))
+    hour       = int(ctx.get("hour_of_day", 12))
+    ratio      = float(ctx.get("amount_to_user_mean_ratio", 1.0))
+    amount_usd = float(ctx.get("amount_usd", 0.0))
+    amount_inr = amount_usd * USD_TO_INR
 
     is_late_night = 0 <= hour <= 5
     is_high_ratio = ratio > 3.0
-    is_significant = amount > 2_000.0  # ₹2,000 minimum to avoid false positives
+    is_significant = amount_inr > 2_000.0  # ₹2,000 minimum to avoid false positives
 
     triggered = is_late_night and is_high_ratio and is_significant
 
@@ -468,7 +458,7 @@ def rule_unusual_hour_high_amount(ctx: dict) -> RuleResult:
         score_boost=15.0 if triggered else 0.0,
         reason=(
             f"Late-night ({hour}:00) transaction at {ratio:.1f}× usual amount "
-            f"(₹{amount:,.0f}) — classic fraud timing pattern"
+            f"(₹{amount_inr:,.0f}) — classic fraud timing pattern"
         ) if triggered else "",
         severity="high" if triggered else "low",
     )
@@ -519,11 +509,12 @@ def rule_weekly_spend_spike(ctx: dict) -> RuleResult:
     above their historical average, it signals compromised credentials.
     Trigger: current txn amount > 10× the user's mean AND >20 txns in 7d.
     """
-    count_7d = int(ctx.get("txn_count_last_7d", 0))
-    ratio    = float(ctx.get("amount_to_user_mean_ratio", 1.0))
-    amount   = float(ctx.get("amount_usd", 0.0))
+    count_7d    = int(ctx.get("txn_count_last_7d", 0))
+    ratio       = float(ctx.get("amount_to_user_mean_ratio", 1.0))
+    amount_usd  = float(ctx.get("amount_usd", 0.0))
+    amount_inr  = amount_usd * USD_TO_INR
 
-    triggered = count_7d > 20 and ratio > 10.0 and amount > 10_000.0
+    triggered = count_7d > 20 and ratio > 10.0 and amount_inr > 10_000.0
 
     return RuleResult(
         rule_id="R13_WEEKLY_SPEND_SPIKE",
@@ -532,7 +523,7 @@ def rule_weekly_spend_spike(ctx: dict) -> RuleResult:
         score_boost=18.0 if triggered else 0.0,
         reason=(
             f"Weekly spend spike: {count_7d} txns in 7d with current txn "
-            f"at {ratio:.1f}× usual (₹{amount:,.0f})"
+            f"at {ratio:.1f}× usual (₹{amount_inr:,.0f})"
         ) if triggered else "",
         severity="high" if triggered else "low",
     )
@@ -554,10 +545,11 @@ def rule_structuring_pattern(ctx: dict) -> RuleResult:
     Note: In production, this would check a sliding window of recent
     amounts, not just the current one. The velocity check is a proxy.
     """
-    amount    = float(ctx.get("amount_usd", 0.0))
-    count_1h  = int(ctx.get("txn_count_last_1h", 0))
+    amount_usd = float(ctx.get("amount_usd", 0.0))
+    amount_inr = amount_usd * USD_TO_INR
+    count_1h   = int(ctx.get("txn_count_last_1h", 0))
 
-    in_band   = INR_STRUCTURING_LOW <= amount <= INR_STRUCTURING_HIGH
+    in_band   = INR_STRUCTURING_LOW <= amount_inr <= INR_STRUCTURING_HIGH
     triggered = in_band and count_1h >= 2  # current + at least 2 more in the hour
 
     return RuleResult(
@@ -566,45 +558,14 @@ def rule_structuring_pattern(ctx: dict) -> RuleResult:
         action="mfa" if triggered else None,
         score_boost=22.0 if triggered else 0.0,
         reason=(
-            f"Structuring detected: ₹{amount:,.0f} in ₹9K–₹10K band "
+            f"Structuring detected: ₹{amount_inr:,.0f} in ₹9K–₹10K band "
             f"with {count_1h} txns in last hour — splitting to avoid alerts"
         ) if triggered else "",
         severity="high" if triggered else "low",
     )
 
 
-# ════════════════════════════════════════════════
-#  R15: RAPID BENEFICIARY REPEAT  (NEW)
-#  Same merchant receives >3 transactions in 1h
-# ════════════════════════════════════════════════
 
-def rule_rapid_beneficiary_repeat(ctx: dict) -> RuleResult:
-    """
-    Multiple transactions to the SAME beneficiary in a short window
-    indicate potential money mule or layering activity.
-    Trigger: >3 txns in 1h AND amount > ₹5,000.
-
-    Note: In production, this checks per-beneficiary velocity from the
-    profile store. In the rule context, elevated velocity + same merchant
-    serves as a proxy.
-    """
-    count_1h   = int(ctx.get("txn_count_last_1h", 0))
-    amount     = float(ctx.get("amount_usd", 0.0))
-    # In a real system, recipient_repeat_count would come from profile
-    # For now, use velocity as a proxy when amount is high
-    triggered  = count_1h > 3 and amount > INR_SUSPICIOUS_LARGE
-
-    return RuleResult(
-        rule_id="R15_RAPID_BENEFICIARY_REPEAT",
-        triggered=triggered,
-        action=None,
-        score_boost=10.0 if triggered else 0.0,
-        reason=(
-            f"Rapid repeat transactions: {count_1h} txns in 1h with "
-            f"₹{amount:,.0f} — potential mule/layering activity"
-        ) if triggered else "",
-        severity="medium" if triggered else "low",
-    )
 
 
 # ════════════════════════════════════════════════
@@ -619,10 +580,11 @@ def rule_country_mismatch(ctx: dict) -> RuleResult:
     In UPI context, cross-border transactions are unusual and need scrutiny.
     """
     cc_changed = int(ctx.get("ip_country_code_changed", 0))
-    amount     = float(ctx.get("amount_usd", 0.0))
+    amount_usd = float(ctx.get("amount_usd", 0.0))
+    amount_inr = amount_usd * USD_TO_INR
     new_ip     = int(ctx.get("is_new_ip", 0))
 
-    triggered = bool(cc_changed) and amount > INR_SUSPICIOUS_LARGE and bool(new_ip)
+    triggered = bool(cc_changed) and amount_inr > INR_SUSPICIOUS_LARGE and bool(new_ip)
 
     return RuleResult(
         rule_id="R16_COUNTRY_MISMATCH",
@@ -631,7 +593,7 @@ def rule_country_mismatch(ctx: dict) -> RuleResult:
         score_boost=18.0 if triggered else 0.0,
         reason=(
             f"Country mismatch: transaction from foreign IP with new IP "
-            f"for ₹{amount:,.0f} — unusual for domestic UPI user"
+            f"for ₹{amount_inr:,.0f} — unusual for domestic UPI user"
         ) if triggered else "",
         severity="high" if triggered else "low",
     )
@@ -649,11 +611,12 @@ def rule_dormant_account_reactivation(ctx: dict) -> RuleResult:
     The legitimate user may have abandoned the account, but a fraudster
     who bought credentials from the dark web reactivates it.
     """
-    inter_sec = float(ctx.get("inter_txn_seconds", 0.0))
-    amount    = float(ctx.get("amount_usd", 0.0))
+    inter_sec   = float(ctx.get("inter_txn_seconds", 0.0))
+    amount_usd  = float(ctx.get("amount_usd", 0.0))
+    amount_inr  = amount_usd * USD_TO_INR
 
     days_since_last = inter_sec / 86_400.0
-    triggered = days_since_last > 60.0 and amount > 10_000.0  # ₹10,000+
+    triggered = days_since_last > 60.0 and amount_inr > 10_000.0  # ₹10,000+
 
     return RuleResult(
         rule_id="R17_DORMANT_REACTIVATION",
@@ -662,7 +625,7 @@ def rule_dormant_account_reactivation(ctx: dict) -> RuleResult:
         score_boost=18.0 if triggered else 0.0,
         reason=(
             f"Dormant account reactivation: {days_since_last:.0f} days inactive, "
-            f"now ₹{amount:,.0f} transaction — credential theft pattern"
+            f"now ₹{amount_inr:,.0f} transaction — credential theft pattern"
         ) if triggered else "",
         severity="high" if triggered else "low",
     )
@@ -680,10 +643,11 @@ def rule_micro_deposit_probing(ctx: dict) -> RuleResult:
     before attempting a large withdrawal.
     Trigger: amount ≤ ₹100 AND ≥5 txns in the last hour.
     """
-    amount   = float(ctx.get("amount_usd", 0.0))
-    count_1h = int(ctx.get("txn_count_last_1h", 0))
+    amount_usd = float(ctx.get("amount_usd", 0.0))
+    amount_inr = amount_usd * USD_TO_INR
+    count_1h   = int(ctx.get("txn_count_last_1h", 0))
 
-    triggered = amount <= INR_MICRO_DEPOSIT and count_1h >= 5
+    triggered = amount_inr <= INR_MICRO_DEPOSIT and count_1h >= 5
 
     return RuleResult(
         rule_id="R18_MICRO_DEPOSIT_PROBE",
@@ -691,7 +655,7 @@ def rule_micro_deposit_probing(ctx: dict) -> RuleResult:
         action=None,
         score_boost=12.0 if triggered else 0.0,
         reason=(
-            f"Micro-deposit probing: ₹{amount:.0f} with {count_1h} txns "
+            f"Micro-deposit probing: ₹{amount_inr:.0f} with {count_1h} txns "
             f"in last hour — testing stolen credentials pattern"
         ) if triggered else "",
         severity="medium" if triggered else "low",
@@ -720,10 +684,8 @@ _ALL_RULES = [
     rule_new_device_new_ip_combined, # R09 — device + IP double-new
     rule_unusual_hour_high_amount,   # R11 — late night + high amount
     # ── Medium-severity boosts ────────────────
-    rule_tor_or_vpn,                 # R04 — TOR/VPN boost
     rule_high_risk_merchant_category,# R06 — MCC boost
     rule_amount_round_large,         # R08 — structuring pattern
-    rule_rapid_beneficiary_repeat,   # R15 — same recipient velocity
     rule_micro_deposit_probing,      # R18 — card testing pattern
 ]
 

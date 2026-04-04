@@ -152,11 +152,29 @@ class _ModelBundle:
 _models = _ModelBundle()
 
 # In-memory ring buffer for recent scored transactions (dashboard)
-_RECENT_TXN_MAX = 500
+_RECENT_TXN_MAX = 5000
 _recent_txns: deque[dict] = deque(maxlen=_RECENT_TXN_MAX)
 
+# JSON persistence for analyst feedback
+FEEDBACK_FILE = os.path.join("backend", "feedback_store.json")
+
+def _load_feedback():
+    if os.path.exists(FEEDBACK_FILE):
+        try:
+            with open(FEEDBACK_FILE, "r") as f:
+                return json.load(f)
+        except: return []
+    return []
+
+def _save_feedback(data):
+    try:
+        with open(FEEDBACK_FILE, "w") as f:
+            json.dump(data, f)
+    except: pass
+
 # In-memory analyst feedback store (flushed to retrain queue)
-_feedback_store: list[dict] = []
+_feedback_store: list[dict] = _load_feedback()
+
 
 # WebSocket connection manager
 class _WSManager:
@@ -783,6 +801,9 @@ def _post_score_tasks(req: ScoreRequest, decision: str, score: float,
     _recent_txns.appendleft({
         "transaction_id": req.transaction_id,
         "user_id":        req.user_id,
+        "device_id":      req.device_id,
+        "ip_address":     req.ip_address,
+        "merchant_id":    req.merchant_id or "Online Store",
         "amount_usd":     req.amount_usd,
         "decision":       decision,
         "score":          score,
@@ -792,12 +813,15 @@ def _post_score_tasks(req: ScoreRequest, decision: str, score: float,
         "latency_ms":     response["latency_ms"]["total"],
     })
 
-    # WebSocket broadcast — schedule on the running event loop
+    # WebSocket broadcast
     payload = {
         "type": "transaction",
         "data": {
             "transaction_id": req.transaction_id,
             "user_id":        req.user_id,
+            "device_id":      req.device_id,
+            "ip_address":     req.ip_address,
+            "merchant_id":    req.merchant_id or "Online Store",
             "amount_usd":     req.amount_usd,
             "decision":       decision,
             "score":          score,
@@ -862,6 +886,7 @@ async def submit_feedback(req: FeedbackRequest):
         "labeled_at":     time.time(),
     }
     _feedback_store.append(label_entry)
+    _save_feedback(_feedback_store)
 
     chain_resolved = False
     if req.chain_id:
@@ -1064,7 +1089,7 @@ async def ws_live_feed(websocket: WebSocket):
         # Send immediate snapshot of recent transactions on connect
         await websocket.send_json({
             "type": "snapshot",
-            "data": list(_recent_txns)[:20],
+            "data": list(_recent_txns),
         })
         # Keep connection alive
         while True:
@@ -1132,6 +1157,7 @@ async def simulate_transactions(
             "decision": resp["decision"],
             "score": resp["score"],
             "simulated_fraud": is_fraud,
+            "latency_ms": resp["latency_ms"]["total"],
         })
 
     return {

@@ -3,7 +3,7 @@ import Topbar from '../components/Topbar';
 import { RiskScoreBadge, ScoreBar } from '../components/UIKit';
 import { TRANSACTIONS, SHAP_FEATURES } from '../data/mockData';
 import { useLiveWebSocket } from '../api';
-import { X, ChevronRight, Cpu, MapPin, Monitor, Clock, AlertOctagon } from 'lucide-react';
+import { X, ChevronRight, ChevronLeft, Cpu, MapPin, Monitor, Clock, AlertOctagon } from 'lucide-react';
 
 function ShapWaterfall({ features }) {
   const max = Math.max(...features.map(f => Math.abs(f.value)));
@@ -78,7 +78,7 @@ function TxnDetailPanel({ txn, onClose }) {
           <div style={{ flex: 1 }}>
             <div style={{ marginBottom: 8 }}><RiskScoreBadge score={score} /></div>
             <div style={{ fontSize: 22, fontWeight: 800, color: ringColor }}>
-              ${txn.amount.toLocaleString()}
+              ₹{txn.amount.toLocaleString()}
             </div>
             <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>{txn.merchant}</div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{txn.type}</div>
@@ -152,7 +152,13 @@ function TxnDetailPanel({ txn, onClose }) {
 export default function LiveFeed() {
   const [selected, setSelected] = useState(null);
   const [filter, setFilter] = useState('all');
+  const [currentPage, setCurrentPage] = useState(1);
   const { messages: liveTxns, isConnected } = useLiveWebSocket();
+
+  // Reset to first page when changing filters
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter]);
 
   // If no live transactions yet, use a slice of mock data as a fallback/skeleton
   const baseTxns = liveTxns.length > 0 ? liveTxns.map(msg => ({
@@ -172,6 +178,12 @@ export default function LiveFeed() {
   })) : TRANSACTIONS.slice(0, 5);
 
   const filtered = filter === 'all' ? baseTxns : baseTxns.filter(t => t.decision === filter);
+  
+  // Pagination Math
+  const itemsPerPage = 15;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / itemsPerPage));
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const currentFilteredData = filtered.slice(startIndex, startIndex + itemsPerPage);
 
   return (
     <div>
@@ -221,7 +233,7 @@ export default function LiveFeed() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((txn, i) => (
+                {currentFilteredData.map((txn, i) => (
                   <tr
                     key={txn.id + i}
                     className="animate-in"
@@ -235,7 +247,7 @@ export default function LiveFeed() {
                       </div>
                     </td>
                     <td><span className="mono" style={{ fontSize: 11 }}>{txn.user}</span></td>
-                    <td><span style={{ fontWeight: 700, color: txn.amount > 1000 ? '#fb923c' : 'inherit' }}>${txn.amount.toLocaleString()}</span></td>
+                    <td><span style={{ fontWeight: 700, color: txn.amount > 1000 ? '#fb923c' : 'inherit' }}>₹{txn.amount.toLocaleString()}</span></td>
                     <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{txn.merchant}</td>
                     <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{txn.type}</td>
                     <td style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{txn.location}</td>
@@ -265,6 +277,36 @@ export default function LiveFeed() {
               </tbody>
             </table>
           </div>
+          
+          {/* Pagination Controls */}
+          {filtered.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 20px', borderTop: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                Showing {startIndex + 1} to {Math.min(startIndex + itemsPerPage, filtered.length)} of {filtered.length} entries
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button 
+                  className="btn btn-ghost" 
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  style={{ padding: '6px 12px', opacity: currentPage === 1 ? 0.3 : 1 }}
+                >
+                  <ChevronLeft size={16} /> <span style={{ marginLeft: 4 }}>Prev</span>
+                </button>
+                <div style={{ fontSize: 12, display: 'flex', alignItems: 'center', padding: '0 8px', color: 'var(--text-secondary)' }}>
+                  Page {currentPage} of {totalPages}
+                </div>
+                <button 
+                  className="btn btn-ghost" 
+                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  style={{ padding: '6px 12px', opacity: currentPage === totalPages ? 0.3 : 1 }}
+                >
+                  <span style={{ marginRight: 4 }}>Next</span> <ChevronRight size={16} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

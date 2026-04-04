@@ -32,7 +32,7 @@ export default function AnalystReview() {
   const [note, setNote] = useState('');
   const [actionLog, setActionLog] = useState([]);
   
-  React.useEffect(() => {
+  const refreshQueue = () => {
     fetchFeedbackQueue().then(resp => {
       const qs = resp.queue.map(q => ({
         id: q.transaction_id,
@@ -47,8 +47,12 @@ export default function AnalystReview() {
         raw: q
       }));
       setQueue(qs);
-      setCurrent(qs[0] || null);
+      if (!current && qs.length > 0) setCurrent(qs[0]);
     }).catch(console.error);
+  };
+
+  React.useEffect(() => {
+    refreshQueue();
   }, []);
 
   const handleAction = async (action) => {
@@ -91,7 +95,17 @@ export default function AnalystReview() {
 
           {/* Queue List */}
           <div className="glass" style={{ padding: '16px', overflowY: 'auto', maxHeight: 680 }}>
-            <div className="section-title" style={{ marginBottom: 12 }}>Review Queue ({queue.length})</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div className="section-title">Review Queue ({queue.length})</div>
+              <button 
+                onClick={refreshQueue}
+                className="btn btn-ghost" 
+                style={{ padding: '4px 8px', minWidth: 'auto', color: '#818cf8' }}
+                title="Refresh Queue"
+              >
+                <RotateCcw size={14} />
+              </button>
+            </div>
             {queue.map(txn => (
               <div
                 key={txn.id}
@@ -108,7 +122,7 @@ export default function AnalystReview() {
                   <RiskScoreBadge score={txn.score} />
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{txn.user}</div>
-                <div style={{ fontSize: 12, fontWeight: 600, marginTop: 3 }}>${txn.amount.toLocaleString()}</div>
+                <div style={{ fontSize: 12, fontWeight: 600, marginTop: 3 }}>₹{txn.amount.toLocaleString()}</div>
                 {txn.ato && <span className="badge badge-ato" style={{ marginTop: 4, fontSize: 9 }}>ATO</span>}
               </div>
             ))}
@@ -133,7 +147,7 @@ export default function AnalystReview() {
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: 28, fontWeight: 900, color: current.score >= 70 ? '#f43f5e' : '#f59e0b' }}>
-                    ${current.amount.toLocaleString()}
+                    ₹{current.amount.toLocaleString()}
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{current.type}</div>
                 </div>
@@ -262,7 +276,7 @@ export default function AnalystReview() {
                   <span className="mono" style={{ fontSize: 10, color: 'var(--text-muted)' }}>{log.time}</span>
                 </div>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{log.action}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{log.user} · ${log.score} risk</div>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{log.user} · Score: {log.score}</div>
                 {log.note && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, fontStyle: 'italic' }}>"{log.note}"</div>}
               </div>
             ))}
