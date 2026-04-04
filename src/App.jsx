@@ -21,7 +21,11 @@ const PAGES = {
 };
 
 export default function App() {
-  const [activePage, setActivePage] = useState('dashboard');
+  // Deep-linking: Initialize from URL (?tab=performance)
+  const params = new URLSearchParams(window.location.search);
+  const initialPage = params.get('tab');
+  
+  const [activePage, setActivePage] = React.useState(initialPage && PAGES[initialPage] ? initialPage : 'dashboard');
   const PageComponent = PAGES[activePage] || Dashboard;
 
   return (

@@ -2,7 +2,7 @@ import React from 'react';
 import logo from '../assets/logo.png';
 import { 
   LayoutDashboard, Zap, ShieldAlert, Network, 
-  FlaskConical, BarChart3, Settings, Activity
+  FlaskConical, BarChart3, Settings, Activity, Cpu
 } from 'lucide-react';
 
 const NAV_ITEMS = [
