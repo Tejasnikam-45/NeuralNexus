@@ -7,7 +7,7 @@ import { TrendingUp, TrendingDown, Shield, AlertTriangle, CheckCircle, Clock } f
 import Topbar from '../components/Topbar';
 import { StatCard, RiskScoreBadge, ScoreBar, AlertSeverityDot } from '../components/UIKit';
 import { HOURLY_VOLUME, SCORE_DISTRIBUTION, TRANSACTIONS, RECENT_ALERTS } from '../data/mockData';
-import { fetchStats, fetchModelPerformance, useLiveWebSocket } from '../api';
+import { fetchStats, fetchModelPerformance, resetSystem, useLiveWebSocket } from '../api';
 
 function CustomTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
@@ -47,7 +47,7 @@ export default function Dashboard() {
   const displayTxns = liveTxns.length > 0 ? liveTxns.map(msg => ({
     id: msg?.transaction_id?.slice(0, 8) || "TXN-???",
     user: msg?.user_id || "unknown",
-    amount: msg?.amount_usd || 0,
+    amount: msg?.amount_inr || (msg?.amount_usd * 83.0) || 0,
     merchant: msg?.top_reason || "Online Store", 
     score: msg?.score || 0,
     decision: msg?.decision || "approve",
@@ -192,9 +192,31 @@ export default function Dashboard() {
           {/* Live Transaction Table */}
           <div className="glass" style={{ overflow: 'hidden' }}>
             <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div className="live-dot" />
-                <span className="section-title" style={{ fontSize: 12 }}>Live Transaction Feed</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div className="live-dot" />
+                  <span className="section-title" style={{ fontSize: 12 }}>Live Transaction Feed</span>
+                </div>
+                <button 
+                  onClick={async () => {
+                    if (window.confirm("Wipe all system history and scores for demo?")) {
+                      await resetSystem();
+                      // State will be cleared via WebSocket 'reset' message
+                    }
+                  }}
+                  style={{ 
+                    background: 'rgba(244, 63, 94, 0.1)', 
+                    color: '#f43f5e', 
+                    border: '1px solid rgba(244, 63, 94, 0.2)',
+                    fontSize: '10px', 
+                    padding: '4px 8px', 
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontWeight: '600'
+                  }}
+                >
+                  RESET SYSTEM
+                </button>
               </div>
               <span className="mono" style={{ color: 'var(--text-muted)' }}>{displayTxns.length} active</span>
             </div>

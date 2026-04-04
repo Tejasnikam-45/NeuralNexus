@@ -235,7 +235,8 @@ body {
 /* ===== TOPBAR ===== */
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 16px 28px;
+  padding: 24px 35px 20px;
+  height: 84px;
   border-bottom: 1px solid var(--border);
   background: rgba(5,8,16,0.8);
   backdrop-filter: blur(20px);

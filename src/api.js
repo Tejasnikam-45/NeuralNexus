@@ -54,6 +54,15 @@ export async function submitFeedback(payload) {
   return res.json();
 }
 
+export async function resetSystem() {
+  const res = await fetch(`${BASE_URL}/reset`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) throw new Error('Failed to reset system');
+  return res.json();
+}
+
 /**
  * WEBSOCKET HOOK
  */
@@ -76,6 +85,8 @@ export function useLiveWebSocket() {
             setMessages(prev => [data.data, ...prev].slice(0, 1000)); // Keep last 1000
         } else if (data.type === 'snapshot') {
             setMessages(data.data);
+        } else if (data.type === 'reset') {
+            setMessages([]);
         }
       } catch (e) {
         console.error("WS Parse error", e);

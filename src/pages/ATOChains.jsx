@@ -240,7 +240,7 @@ export default function ATOChains() {
           <span style={{ fontSize: 20 }}>🧠</span>
           <span>
             <b style={{ color: 'var(--text-primary)' }}>How ATO Detection Works:</b> When a suspicious login event fires (new device, failed MFA, IP change),
-            NeuralNexus opens a <b style={{ color: '#818cf8' }}>30-second chain window</b>. Any subsequent transaction from that account
+            NeuralNexus opens a <b style={{ color: '#818cf8' }}>300-second chain window</b>. Any subsequent transaction from that account
             automatically receives an elevated risk signal — independent of the ML score — and triggers step-up MFA or immediate block.
           </span>
         </div>

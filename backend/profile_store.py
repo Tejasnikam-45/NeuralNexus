@@ -398,6 +398,10 @@ class ProfileStore:
         ]
         return self._r.delete(*keys)
 
+    def flush_all(self) -> bool:
+        """Wipe entire Redis/fakeredis database. Demo helper only."""
+        return self._r.flushall()
+
     # ── HEALTH CHECK ─────────────────────────────────────────────
 
     def ping(self) -> bool:

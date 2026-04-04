@@ -805,6 +805,7 @@ def _post_score_tasks(req: ScoreRequest, decision: str, score: float,
         "ip_address":     req.ip_address,
         "merchant_id":    req.merchant_id or "Online Store",
         "amount_usd":     req.amount_usd,
+        "amount_inr":     round(req.amount_usd * 83.0, 2),
         "decision":       decision,
         "score":          score,
         "timestamp_utc":  now_ts,
@@ -823,6 +824,7 @@ def _post_score_tasks(req: ScoreRequest, decision: str, score: float,
             "ip_address":     req.ip_address,
             "merchant_id":    req.merchant_id or "Online Store",
             "amount_usd":     req.amount_usd,
+            "amount_inr":     round(req.amount_usd * 83.0, 2),
             "decision":       decision,
             "score":          score,
             "timestamp_utc":  now_ts,
@@ -1072,6 +1074,22 @@ def clear_feedback():
     """Demo helper: clears the in-memory feedback store."""
     _feedback_store.clear()
     return {"status": "cleared"}
+
+
+# ═══════════════════════════════════════════════════════════════
+# POST /reset — Reset the entire system state (DEMO ONLY)
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/reset")
+async def reset_system():
+    """Wipes all user profiles and recent transactions."""
+    profile_store.flush_all()
+    _recent_txns.clear()
+    
+    # Broadcast reset to all connected dashboard instances
+    await _ws_manager.broadcast({"type": "reset", "data": []})
+    
+    return {"status": "system_reset", "timestamp": time.time()}
 
 
 # ═══════════════════════════════════════════════════════════════

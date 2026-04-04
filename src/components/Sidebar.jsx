@@ -1,15 +1,16 @@
 import React from 'react';
+import logo from '../assets/logo.png';
 import { 
   LayoutDashboard, Zap, ShieldAlert, Network, 
-  FlaskConical, BarChart3, Settings, Bell, Activity
+  FlaskConical, BarChart3, Settings, Activity
 } from 'lucide-react';
 
 const NAV_ITEMS = [
   { id: 'dashboard',   icon: LayoutDashboard, label: 'Dashboard',         badge: null },
-  { id: 'live',        icon: Zap,             label: 'Live Feed',         badge: '3' },
-  { id: 'ato',         icon: ShieldAlert,     label: 'ATO Chains',        badge: '2' },
+  { id: 'live',        icon: Zap,             label: 'Live Feed',         badge: null },
+  { id: 'ato',         icon: ShieldAlert,     label: 'ATO Chains',        badge: null },
   { id: 'graph',       icon: Network,         label: 'Fraud Graph',       badge: null },
-  { id: 'analyst',     icon: Activity,        label: 'Analyst Review',    badge: '5' },
+  { id: 'analyst',     icon: Activity,        label: 'Analyst Review',    badge: null },
   { id: 'simulator',   icon: FlaskConical,    label: 'Fraud Simulator',   badge: null },
   { id: 'performance', icon: BarChart3,       label: 'Model Performance', badge: null },
 ];
@@ -20,16 +21,30 @@ export default function Sidebar({ active, onNav }) {
       {/* Logo */}
       <div className="sidebar-logo">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{
-            width: 36, height: 36, borderRadius: 10,
-            background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 4px 15px rgba(99,102,241,0.4)',
-            fontSize: 18
-          }}>⚡</div>
+          <img src={logo} alt="Neural Watch" style={{ height: 40, width: 'auto' }} />
           <div>
-            <div style={{ fontWeight: 800, fontSize: 15, letterSpacing: '-0.02em' }}>NeuralNexus</div>
-            <div style={{ fontSize: 10, color: 'var(--text-muted)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Fraud Intelligence</div>
+            <div style={{ 
+              fontWeight: 900, 
+              fontSize: 20, 
+              letterSpacing: '-0.04em', 
+              lineHeight: 1,
+              background: 'linear-gradient(180deg, #FFFFFF 0%, #94A3B8 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent'
+            }}>
+              Neural Watch
+            </div>
+            <div style={{ 
+              fontSize: 8, 
+              color: '#818cf8', 
+              letterSpacing: '0.18em', 
+              textTransform: 'uppercase', 
+              fontWeight: 800,
+              marginTop: 4,
+              opacity: 0.9
+            }}>
+              Fraud Intelligence
+            </div>
           </div>
         </div>
       </div>
