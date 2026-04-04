@@ -7,6 +7,7 @@ import FraudGraph from './pages/FraudGraph';
 import AnalystReview from './pages/AnalystReview';
 import FraudSimulator from './pages/FraudSimulator';
 import ModelPerformance from './pages/ModelPerformance';
+import Architecture from './pages/Architecture';
 
 const PAGES = {
   dashboard:   Dashboard,
@@ -16,6 +17,7 @@ const PAGES = {
   analyst:     AnalystReview,
   simulator:   FraudSimulator,
   performance: ModelPerformance,
+  architecture: Architecture,
 };
 
 export default function App() {

@@ -1,7 +1,7 @@
 import React from 'react';
 import { 
   LayoutDashboard, Zap, ShieldAlert, Network, 
-  FlaskConical, BarChart3, Settings, Bell, Activity
+  FlaskConical, BarChart3, Settings, Bell, Activity, Cpu
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { id: 'graph',       icon: Network,         label: 'Fraud Graph',       badge: null },
   { id: 'analyst',     icon: Activity,        label: 'Analyst Review',    badge: '5' },
   { id: 'simulator',   icon: FlaskConical,    label: 'Fraud Simulator',   badge: null },
+  { id: 'architecture',icon: Cpu,             label: 'System Architecture',badge: null },
   { id: 'performance', icon: BarChart3,       label: 'Model Performance', badge: null },
 ];
 

@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NeuralNexus: Real-Time Data Flow</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;700&display=swap');
+
+        body {
+            margin: 0; padding: 0;
+            background-color: #0f172a; color: #f8fafc;
+            font-family: 'Inter', sans-serif;
+            display: flex; justify-content: center; align-items: center;
+            height: 100vh; overflow: hidden;
+        }
+
+        .container {
+            position: relative; width: 1100px; height: 750px;
+            background: #1e293b; border-radius: 20px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            border: 1px solid #334155;
+            display: flex; flex-direction: column;
+        }
+
+        h1 {
+            text-align: center; margin-top: 25px; margin-bottom: 0px;
+            font-size: 22px; letter-spacing: 2px; color: #e2e8f0; text-transform: uppercase;
+        }
+
+        .surface {
+            position: relative; flex: 1; margin: 20px;
+            background: #0f172a; border-radius: 12px;
+            border: 1px solid #1e293b; overflow: hidden;
+        }
+
+        .node {
+            position: absolute; padding: 12px 10px; border-radius: 8px;
+            font-weight: 600; font-size: 13px; text-align: center; z-index: 10;
+            backdrop-filter: blur(10px); border: 2px solid;
+            width: 125px; box-sizing: border-box;
+            transition: all 0.3s;
+            background: rgba(30, 41, 59, 0.4);
+        }
+        
+        .node.active {
+            transform: scale(1.15);
+            box-shadow: 0 0 25px currentcolor;
+            background: rgba(30, 41, 59, 0.9);
+        }
+
+        /* Tree Root */
+        #node-1 { top: 220px; left: 40px;  border-color: #38bdf8; color: #38bdf8; } /* User */
+        #node-2 { top: 220px; left: 190px; border-color: #a78bfa; color: #a78bfa; } /* API */
+        
+        /* Tree Branch 1 (Data Fetch) */
+        #node-3 { top: 100px; left: 340px; border-color: #f43f5e; color: #f43f5e; } /* Redis */
+        #node-4 { top: 340px; left: 340px; border-color: #ec4899; color: #ec4899; } /* ATO Detector */
+        
+        /* Tree Convergence 1 */
+        #node-5 { top: 220px; left: 490px; border-color: #8b5cf6; color: #8b5cf6; } /* Feature Eng */
+        
+        /* Tree Branch 2 (Evaluation) */
+        #node-6 { top: 100px; left: 640px; border-color: #facc15; color: #facc15; } /* Rules */
+        #node-7 { top: 340px; left: 640px; border-color: #34d399; color: #34d399; } /* ML */
+        
+        /* SHAP Extension on ML Branch */
+        #node-8 { top: 340px; left: 790px; border-color: #2dd4bf; color: #2dd4bf; } /* SHAP */
+        
+        /* Final Convergence */
+        #node-9 { top: 220px; left: 880px; border-color: #fb923c; color: #fb923c; } /* Decision */
+        #node-10{ top: 220px; left: 1030px; border-color: #94a3b8; color: #94a3b8; } /* Bank */
+
+        /* SVG Paths for Tree Lines */
+        .svg-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none;
+        }
+        path, line {
+            stroke: #334155; stroke-width: 2.5; fill: none; stroke-dasharray: 4, 4;
+            animation: dash 20s linear infinite;
+            border-radius: 5px;
+        }
+        @keyframes dash { to { stroke-dashoffset: -1000; } }
+
+        /* Detail Panel */
+        .detail-panel {
+            position: absolute; bottom: 20px; left: 20px; right: 20px;
+            background: rgba(30, 41, 59, 0.8); border: 1px solid #334155;
+            border-radius: 12px; padding: 20px; display: flex; gap: 20px;
+        }
+        .timer-box {
+            width: 140px; background: rgba(0,0,0,0.5); border-radius: 8px;
+            padding: 15px; text-align: center; border: 1px solid #0f172a;
+        }
+        .timer-val { font-family: 'JetBrains Mono', monospace; font-size: 32px; font-weight: 700; color: #34d399; }
+        .timer-lbl { font-size: 10px; color: #94a3b8; letter-spacing: 1px; text-transform: uppercase; margin-top: 5px; }
+        
+        .desc-box { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+        .desc-title { font-size: 16px; font-weight: 800; color: #fff; margin-bottom: 8px; display: flex; align-items: center; gap: 10px;}
+        .desc-title span { background: #3b82f6; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px;}
+        .desc-text { font-size: 14px; color: #cbd5e1; line-height: 1.5; }
+
+        /* Block Wall */
+        #block-wall { stroke: #ef4444; stroke-width: 5; stroke-dasharray: 0; opacity: 0; transition: opacity 0.3s; }
+
+        /* The Execution Thread Packet */
+        .packet {
+            position: absolute; width: 14px; height: 14px;
+            background-color: #fff; border-radius: 50%;
+            box-shadow: 0 0 15px 5px rgba(255, 255, 255, 0.8);
+            z-index: 20; top: 0; left: 0; opacity: 0;
+            margin-top: -7px; margin-left: -7px; /* Center perfectly on coordinates */
+        }
+
+        /* Animation following the exact tree X,Y centers */
+        @keyframes flowPacket {
+            0% { opacity: 0; transform: translate(102px, 240px); background: #38bdf8; box-shadow: 0 0 15px #38bdf8;}
+            /* N1 to N2 */
+            10% { opacity: 1; transform: translate(252px, 240px); background: #a78bfa; box-shadow: 0 0 15px #a78bfa;}
+            /* N2 branches UP to Redis N3 */
+            20% { transform: translate(402px, 120px); background: #f43f5e; box-shadow: 0 0 15px #f43f5e; }
+            /* Redis N3 drops to ATO N4 (async await queue execution) */
+            30% { transform: translate(402px, 360px); background: #ec4899; box-shadow: 0 0 15px #ec4899;}
+            /* ATO N4 converges to Feat N5 */
+            40% { transform: translate(552px, 240px); background: #8b5cf6; box-shadow: 0 0 15px #8b5cf6;}
+            /* Feat N5 branches UP to Rules N6 */
+            50% { transform: translate(702px, 120px); background: #facc15; box-shadow: 0 0 15px #facc15;}
+            /* Rules N6 drops to ML N7 */
+            60% { transform: translate(702px, 360px); background: #34d399; box-shadow: 0 0 15px #34d399;}
+            /* ML N7 directly to SHAP N8 */
+            70% { transform: translate(852px, 360px); background: #2dd4bf; box-shadow: 0 0 15px #2dd4bf;}
+            /* Branches converge at Decision N9 */
+            80% { transform: translate(942px, 240px); background: #fb923c; box-shadow: 0 0 15px #fb923c;}
+            /* Decision to Block Wall */
+            85% { transform: translate(1010px, 240px); background: #ef4444; box-shadow: 0 0 30px #ef4444; opacity: 1;}
+            88% { transform: translate(1010px, 240px); opacity: 0;}
+            100% { opacity: 0; transform: translate(1010px, 240px); }
+        }
+        .animating { animation: flowPacket 10s infinite; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>NeuralNexus <span style="color: #6366f1;">//</span> Hierarchical Tree Execution</h1>
+    <div style="text-align: center; color: #94a3b8; font-size: 12px; margin-top: 4px;">Live Transaction Evaluation Thread</div>
+
+    <div class="surface">
+        <svg class="svg-container">
+            <!-- Root -->
+            <line x1="102" y1="240" x2="252" y2="240" />
+            
+            <!-- Branch 1 (Gateway to Context DBs) -->
+            <path d="M 252 240 C 290 240, 310 120, 402 120" /> <!-- To Redis -->
+            <path d="M 252 240 C 290 240, 310 360, 402 360" /> <!-- To ATO -->
+            
+            <!-- Converge 1 (Context to Feature Eng) -->
+            <path d="M 402 120 C 490 120, 510 240, 552 240" />
+            <path d="M 402 360 C 490 360, 510 240, 552 240" />
+            
+            <!-- Branch 2 (Feature Eng to Evaluators) -->
+            <path d="M 552 240 C 590 240, 610 120, 702 120" /> <!-- To Rules -->
+            <path d="M 552 240 C 590 240, 610 360, 702 360" /> <!-- To ML -->
+            
+            <!-- SHAP Continuation -->
+            <line x1="702" y1="360" x2="852" y2="360" />
+            
+            <!-- Final Convergence (Evaluators to Decision) -->
+            <path d="M 702 120 C 800 120, 850 240, 942 240" /> <!-- Rules to Decision -->
+            <path d="M 852 360 C 890 360, 910 240, 942 240" /> <!-- SHAP to Decision -->
+            
+            <!-- Decision to Ledger -->
+            <line x1="942" y1="240" x2="1092" y2="240" />
+
+            <!-- The Block Wall -->
+            <line id="block-wall" x1="1010" y1="200" x2="1010" y2="280" />
+        </svg>
+
+        <!-- Nodes -->
+        <div class="node" id="node-1">👤 1. Mobile App</div>
+        <div class="node" id="node-2">⚡ 2. API Gateway</div>
+        <div class="node" id="node-3">🗄️ 3. Redis Store</div>
+        <div class="node" id="node-4">🔗 4. ATO Detector</div>
+        <div class="node" id="node-5">⚙️ 5. Feat. Eng</div>
+        <div class="node" id="node-6">🛡️ 6. Rules Engine</div>
+        <div class="node" id="node-7">🧠 7. ML Ensemble</div>
+        <div class="node" id="node-8">📊 8. SHAP Gen</div>
+        <div class="node" id="node-9">⚖️ 9. Scoring</div>
+        <div class="node" id="node-10" style="opacity: 0.5;">🏦 10. Ledger</div>
+
+        <div class="packet animating"></div>
+
+        <!-- Details -->
+        <div class="detail-panel">
+            <div class="timer-box">
+                <div class="timer-val" id="ms-clock">0ms</div>
+                <div class="timer-lbl">Latency Budget</div>
+            </div>
+            <div class="desc-box">
+                <div class="desc-title" id="desc-title">System Idle <span>Stage 0</span></div>
+                <div class="desc-text" id="desc-text">Waiting for real-time transaction payload from the client application.</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Frame Definitions (syncs with 10s packet animation)
+    const frames = [
+        { pct: 0, ms: 0, id: 1, title: "Client Application Request", text: "A user attempts to send $5,000 via a Mobile application. The edge device sends a JSON payload to NeuralNexus." },
+        { pct: 10, ms: 2, id: 2, title: "FastApi Root Integration", text: "The POST /score endpoint receives the transaction object and splits it into independent database threads." },
+        { pct: 20, ms: 7, id: 3, title: "Redis Profile Store (Tree Branch 1)", text: "System queries Redis for the user's historical rolling Welford statistics (averages, velocities, std deviations)." },
+        { pct: 30, ms: 8, id: 4, title: "ATO SQLite Check (Tree Branch 1)", text: "System checks internal SQL database to see if an Account Takeover chain was opened for this specific User ID recently." },
+        { pct: 40, ms: 12, id: 5, title: "Feature Engineering Convergence", text: "Roots converge: Data Pipeline merges Redis and ATO results to engineer 46 specific computational feature patterns." },
+        { pct: 50, ms: 15, id: 6, title: "Hybrid Rule Engine (Tree Branch 2)", text: "Hard logic rules (OFAC blacklists) run in parallel to the ML layer for deterministic guarantees." },
+        { pct: 60, ms: 38, id: 7, title: "Isolation Forest + XGBoost (Tree Branch 2)", text: "The 46-length vector is passed into the live AI models. The ensemble outputs a weighted 0-100 probability." },
+        { pct: 70, ms: 55, id: 8, title: "SHAP Explainability", text: "TreeExplainer attaches to the ML inference layer to deduct mathematical reasons for the weighted output." },
+        { pct: 80, ms: 68, id: 9, title: "Decision Routing Convergence", text: "Rules and ML pathways converge. The finalized 0-100 logic concludes this is a fraudulent attack." },
+        { pct: 85, ms: 69, id: 10, title: "PRE-AUTHORIZATION BLOCK", text: "The transaction is cut off at the edge. The Core Banking Ledger is completely isolated and protected. No money is lost." }
+    ];
+
+    let currentPct = 0;
+    let currentMs = 0;
+    let targetMs = 0;
+
+    setInterval(() => {
+        currentPct += 1;
+        if(currentPct >= 100) currentPct = 0;
+
+        let currentFrame = frames[0];
+        for(let i=0; i<frames.length; i++){
+            if(currentPct >= frames[i].pct) currentFrame = frames[i];
+        }
+
+        targetMs = currentFrame.ms;
+        if(currentMs < targetMs) currentMs += (targetMs - currentMs) * 0.2;
+        if(currentMs > targetMs && currentPct < 5) currentMs = 0;
+        
+        const msClock = document.getElementById('ms-clock');
+        msClock.innerText = Math.round(currentMs) + "ms";
+
+        document.getElementById('desc-title').innerHTML = currentFrame.title + ` <span>Stage ${currentFrame.id}</span>`;
+        document.getElementById('desc-text').innerText = currentFrame.text;
+
+        document.querySelectorAll('.node').forEach(n => n.classList.remove('active'));
+        if(currentFrame.id <= 9) document.getElementById('node-'+currentFrame.id).classList.add('active');
+
+        if(currentPct >= 84 && currentPct <= 98) {
+            document.getElementById('block-wall').style.opacity = 1;
+            document.getElementById('node-10').style.opacity = 0.1;
+            document.getElementById('desc-title').style.color = '#ef4444';
+            msClock.style.color = '#ef4444';
+        } else {
+            document.getElementById('block-wall').style.opacity = 0;
+            document.getElementById('node-10').style.opacity = 0.5;
+            document.getElementById('desc-title').style.color = '#fff';
+            msClock.style.color = '#34d399';
+        }
+
+    }, 100);
+</script>
+</body>
+</html>
