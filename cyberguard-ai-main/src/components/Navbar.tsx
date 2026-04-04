@@ -6,7 +6,7 @@ import { ThemeToggle } from './ThemeToggle';
 const navLinks = [
   { label: 'Dashboard', href: 'http://localhost:5173/', external: true },
   { label: 'Model Performance', href: 'http://localhost:5173/?tab=performance', external: true },
-  { label: 'System Architecture', href: 'http://localhost:5173/?tab=architecture', external: true },
+  // { label: 'System Architecture', href: 'http://localhost:5173/?tab=architecture', external: true },
 ];
 
 const Navbar = () => {
