@@ -70,6 +70,7 @@ export default function FraudSimulator() {
           score: Math.round(t.score),
           decision: t.decision,
           ato: t.simulated_fraud,
+          latency: t.latency_ms,
           time: new Date().toLocaleTimeString('en-US', { hour12: false })
         }]);
         i++;
@@ -224,11 +225,11 @@ export default function FraudSimulator() {
                           {txn.ato && <span className="badge badge-ato" style={{ marginLeft: 6, fontSize: 9 }}>ATO</span>}
                         </td>
                         <td><span className="mono" style={{ fontSize: 11 }}>{txn.user}</span></td>
-                        <td><span style={{ fontWeight: 700 }}>${txn.amount.toLocaleString()}</span></td>
+                        <td><span style={{ fontWeight: 700 }}>₹{txn.amount.toLocaleString()}</span></td>
                         <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{txn.merchant}</td>
                         <td><ScoreBar score={txn.score} /></td>
                         <td><RiskScoreBadge score={txn.score} /></td>
-                        <td><span className="mono" style={{ color: '#10b981', fontSize: 11 }}>{Math.floor(35 + Math.random() * 25)}ms</span></td>
+                        <td><span className="mono" style={{ color: '#10b981', fontSize: 11 }}>{txn.latency ? `${Math.round(txn.latency)}ms` : '35ms'}</span></td>
                         <td><span className="mono" style={{ color: 'var(--text-muted)', fontSize: 11 }}>{txn.time}</span></td>
                       </tr>
                     ))}

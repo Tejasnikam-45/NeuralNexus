@@ -32,7 +32,7 @@ export default function AnalystReview() {
   const [note, setNote] = useState('');
   const [actionLog, setActionLog] = useState([]);
   
-  React.useEffect(() => {
+  const refreshQueue = () => {
     fetchFeedbackQueue().then(resp => {
       const qs = resp.queue.map(q => ({
         id: q.transaction_id,
@@ -47,23 +47,28 @@ export default function AnalystReview() {
         raw: q
       }));
       setQueue(qs);
-      setCurrent(qs[0] || null);
+      if (!current && qs.length > 0) setCurrent(qs[0]);
     }).catch(console.error);
+  };
+
+  React.useEffect(() => {
+    refreshQueue();
   }, []);
 
   const handleAction = async (action) => {
     if (!current) return;
-    const label = action === 'safe' ? 'false_positive' : action === 'fraud' ? 'true_fraud' : 'needs_review';
+    // Backend only accepts 'fraud' or 'legit' — map all three actions
+    const label = action === 'fraud' ? 'fraud' : 'legit';
     const logLabel = action === 'safe' ? '✅ Marked Safe' : action === 'fraud' ? '❌ Confirmed Fraud' : '🔄 Queued for Retraining';
     
     try {
       await submitFeedback({
         transaction_id: current.id,
+        user_id: current.user,        // required by backend FeedbackRequest
         analyst_id: 'analyst_demo',
-        label,
-        analyst_note: note,
-        override_decision: action === 'safe' ? 'approve' : 'block',
-        timestamp_utc: new Date().toISOString()
+        label,                        // 'fraud' | 'legit'
+        notes: note,                  // backend field is 'notes', not 'analyst_note'
+        chain_id: current.raw?.ato_chain_id || null,
       });
       
       setActionLog(prev => [{
@@ -76,7 +81,8 @@ export default function AnalystReview() {
       setCurrent(remaining[0] || null);
       setNote('');
     } catch (err) {
-      console.error(err);
+      console.error('Feedback submission failed:', err);
+      alert(`Error: ${err.message}`);
     }
   };
 
@@ -89,7 +95,17 @@ export default function AnalystReview() {
 
           {/* Queue List */}
           <div className="glass" style={{ padding: '16px', overflowY: 'auto', maxHeight: 680 }}>
-            <div className="section-title" style={{ marginBottom: 12 }}>Review Queue ({queue.length})</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div className="section-title">Review Queue ({queue.length})</div>
+              <button 
+                onClick={refreshQueue}
+                className="btn btn-ghost" 
+                style={{ padding: '4px 8px', minWidth: 'auto', color: '#818cf8' }}
+                title="Refresh Queue"
+              >
+                <RotateCcw size={14} />
+              </button>
+            </div>
             {queue.map(txn => (
               <div
                 key={txn.id}
@@ -106,7 +122,7 @@ export default function AnalystReview() {
                   <RiskScoreBadge score={txn.score} />
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{txn.user}</div>
-                <div style={{ fontSize: 12, fontWeight: 600, marginTop: 3 }}>${txn.amount.toLocaleString()}</div>
+                <div style={{ fontSize: 12, fontWeight: 600, marginTop: 3 }}>₹{txn.amount.toLocaleString()}</div>
                 {txn.ato && <span className="badge badge-ato" style={{ marginTop: 4, fontSize: 9 }}>ATO</span>}
               </div>
             ))}
@@ -131,7 +147,7 @@ export default function AnalystReview() {
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={{ fontSize: 28, fontWeight: 900, color: current.score >= 70 ? '#f43f5e' : '#f59e0b' }}>
-                    ${current.amount.toLocaleString()}
+                    ₹{current.amount.toLocaleString()}
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{current.type}</div>
                 </div>
@@ -171,7 +187,21 @@ export default function AnalystReview() {
               {/* SHAP */}
               <div style={{ marginBottom: 20 }}>
                 <div className="section-title" style={{ marginBottom: 10 }}>SHAP Feature Importance</div>
-                {SHAP_FEATURES.map(f => <ShapBar key={f.name} feature={f} />)}
+                {(() => {
+                  const realReasons = current.raw?.shap_reasons;
+                  if (realReasons && realReasons.length > 0) {
+                    // Render real SHAP reasons from backend
+                    return realReasons.map((f, i) => (
+                      <ShapBar key={i} feature={{
+                        name: f.display || f.feature || `Feature ${i}`,
+                        value: Math.abs(f.shap ?? f.value ?? 0),
+                        positive: f.direction ? f.direction.includes('↑') : (f.shap ?? 0) > 0,
+                      }} />
+                    ));
+                  }
+                  // Fallback to static mock if no real data yet
+                  return SHAP_FEATURES.map(f => <ShapBar key={f.name} feature={f} />);
+                })()}
               </div>
 
               {/* Score bar */}
@@ -246,7 +276,7 @@ export default function AnalystReview() {
                   <span className="mono" style={{ fontSize: 10, color: 'var(--text-muted)' }}>{log.time}</span>
                 </div>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{log.action}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{log.user} · ${log.score} risk</div>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{log.user} · Score: {log.score}</div>
                 {log.note && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, fontStyle: 'italic' }}>"{log.note}"</div>}
               </div>
             ))}
