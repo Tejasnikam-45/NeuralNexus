@@ -12,7 +12,7 @@ const NAV_ITEMS = [
   { id: 'graph',       icon: Network,         label: 'Fraud Graph',       badge: null },
   { id: 'analyst',     icon: Activity,        label: 'Analyst Review',    badge: null },
   { id: 'simulator',   icon: FlaskConical,    label: 'Fraud Simulator',   badge: null },
-  // { id: 'architecture',icon: Cpu,             label: 'System Architecture',badge: null },
+  { id: 'architecture',icon: Cpu,             label: 'System Architecture',badge: null },
   { id: 'performance', icon: BarChart3,       label: 'Model Performance', badge: null },
 ];
 
